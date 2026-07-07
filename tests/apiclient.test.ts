@@ -277,9 +277,7 @@ describe('ApiClient.validate()', () => {
   });
 
   it('returns valid=false with reason on 401 Unauthorized', async () => {
-    fetchMock.mockResolvedValueOnce(
-      mockJsonResponse({ message: 'Unauthorized' }, false, 401),
-    );
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ message: 'Unauthorized' }, false, 401));
     const client = new ApiClient({
       baseUrl: 'https://api.example.com',
       token: 'bad-token',
@@ -291,9 +289,7 @@ describe('ApiClient.validate()', () => {
   });
 
   it('returns valid=false with HTTP status message on other non-ok codes', async () => {
-    fetchMock.mockResolvedValueOnce(
-      mockJsonResponse({ message: 'Forbidden' }, false, 403),
-    );
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ message: 'Forbidden' }, false, 403));
     const client = new ApiClient({ baseUrl: 'https://api.example.com', token: 'tok' });
     const result = await client.validate();
     expect(result.valid).toBe(false);
@@ -309,9 +305,7 @@ describe('ApiClient.validate()', () => {
   });
 
   it('accepts baseUrlOverride and tokenOverride', async () => {
-    fetchMock.mockResolvedValueOnce(
-      mockJsonResponse({ id: 1, email: 'a@b.com', role: 'ADMIN' }),
-    );
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ id: 1, email: 'a@b.com', role: 'ADMIN' }));
     const client = new ApiClient({
       baseUrl: 'https://old.example.com',
       token: 'old-token',
@@ -403,9 +397,7 @@ describe('ApiClient.login()', () => {
   });
 
   it('joins array error message on failure', async () => {
-    fetchMock.mockResolvedValueOnce(
-      mockJsonResponse({ message: ['err1', 'err2'] }, false, 400),
-    );
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ message: ['err1', 'err2'] }, false, 400));
     const client = new ApiClient({ baseUrl: 'https://api.example.com' });
     await expect(client.login()).rejects.toThrow('err1, err2');
   });

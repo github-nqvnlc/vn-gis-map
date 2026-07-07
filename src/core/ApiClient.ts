@@ -350,11 +350,7 @@ export class ApiClient {
   private extractLoginResult(body: unknown): LoginResult | undefined {
     if (!body || typeof body !== 'object') return undefined;
     const obj = body as Record<string, unknown>;
-    if (
-      typeof obj.accessToken === 'string' &&
-      typeof obj.user === 'object' &&
-      obj.user !== null
-    ) {
+    if (typeof obj.accessToken === 'string' && typeof obj.user === 'object' && obj.user !== null) {
       const user = this.extractUser(obj.user);
       if (user) {
         return {
