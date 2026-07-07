@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VN GIS Map - MapLibre Example</title>
+
+    <!-- MapLibre CSS (peer dependency) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css"
+      crossorigin=""
+    />
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+      }
+      #sidebar {
+        width: 300px;
+        padding: 20px;
+        background: #f7f8fa;
+        border-right: 1px solid #e2e6ea;
+        overflow-y: auto;
+      }
+      #sidebar h1 {
+        font-size: 18px;
+        margin: 0 0 16px;
+        color: #237804;
+      }
+      #map {
+        flex: 1;
+        height: 100vh;
+      }
+      .control-group {
+        margin-bottom: 16px;
+      }
+      .control-group label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      button {
+        display: inline-block;
+        padding: 8px 14px;
+        margin: 0 6px 6px 0;
+        border: none;
+        border-radius: 6px;
+        background: #52c41a;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      button:hover {
+        background: #389e0d;
+      }
+      button.secondary {
+        background: #e2e6ea;
+        color: #333;
+      }
+      button.secondary:hover {
+        background: #cfd4da;
+      }
+      select {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #cfd4da;
+        border-radius: 6px;
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+      #info {
+        font-size: 13px;
+        line-height: 1.6;
+        color: #333;
+        background: #fff;
+        border: 1px solid #e2e6ea;
+        border-radius: 6px;
+        padding: 12px;
+        min-height: 60px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <h1>VN GIS Map · MapLibre</h1>
+
+      <div class="control-group">
+        <label>Tỉnh / Thành</label>
+        <button id="btn-provinces">Hiện tỉnh/thành</button>
+        <button id="btn-hide-provinces" class="secondary">Ẩn</button>
+      </div>
+
+      <div class="control-group">
+        <label>Xã / Phường theo tỉnh</label>
+        <select id="province-select">
+          <option value="01">Hà Nội (01)</option>
+          <option value="79">TP. Hồ Chí Minh (79)</option>
+          <option value="48">Đà Nẵng (48)</option>
+          <option value="31">Hải Phòng (31)</option>
+          <option value="92">Cần Thơ (92)</option>
+        </select>
+        <button id="btn-wards">Hiện xã/phường</button>
+      </div>
+
+      <div class="control-group">
+        <label>Reverse geocode (click lên bản đồ)</label>
+        <div id="info">Chưa có dữ liệu. Hãy click lên bản đồ.</div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- MapLibre JS (peer dependency) -->
+    <script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js" crossorigin=""></script>
+
+    <script type="module">
+      import { VNGisMap } from '../dist/index.esm.js';
+      import { MapLibreRenderer } from '../dist/renderers/maplibre.esm.js';
+
+      const API_BASE_URL = 'http://localhost:4000';
+      const API_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYWRtaW5Adm4uZ292LnZuIiwicm9sZSI6IkFETUlOIiwiaWF0IjoxNzgzMzIzMDEwLCJleHAiOjE3ODM5Mjc4MTB9.rJfu2ox53AkRKZ_37a0-P3SHx387C9W17HpqDnyvKPg';
+
+      const infoEl = document.getElementById('info');
+
+      const map = new VNGisMap(
+        {
+          container: 'map',
+          renderer: 'maplibre',
+          apiBaseUrl: API_BASE_URL,
+          token: API_TOKEN,
+          layers: { provinces: true },
+          onProvinceClick: (feature) => {
+            const p = feature.properties;
+            infoEl.innerHTML = `<strong>${p.name ?? p.code}</strong><br/>Mã tỉnh: ${p.code}`;
+          },
+          onWardClick: (feature) => {
+            const p = feature.properties;
+            infoEl.innerHTML = `<strong>${p.name ?? p.code}</strong><br/>Mã xã: ${p.code}`;
+          },
+        },
+        () => new MapLibreRenderer(window.maplibregl),
+      );
+
+      map.on('click', async (payload) => {
+        if (!payload.lngLat) return;
+        const [lng, lat] = payload.lngLat;
+        infoEl.textContent = 'Đang tra cứu...';
+        try {
+          const result = await map.reverseGeocode(lng, lat);
+          if (result.found && result.ward) {
+            infoEl.innerHTML = `
+              <strong>${result.ward.ward_full_name}</strong><br/>
+              ${result.ward.province_full_name}<br/>
+              <small>${lng.toFixed(5)}, ${lat.toFixed(5)}</small>
+            `;
+          } else {
+            infoEl.innerHTML = `Không tìm thấy khu vực tại <small>${lng.toFixed(5)}, ${lat.toFixed(5)}</small>`;
+          }
+        } catch (err) {
+          infoEl.textContent = 'Lỗi tra cứu: ' + err.message;
+        }
+      });
+
+      document.getElementById('btn-provinces').onclick = () => map.showProvinces();
+      document.getElementById('btn-hide-provinces').onclick = () => map.hideProvinces();
+      document.getElementById('btn-wards').onclick = () => {
+        const code = document.getElementById('province-select').value;
+        map.showWards(code);
+      };
+    </script>
+  </body>
+</html>
