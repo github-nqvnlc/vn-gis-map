@@ -1,6 +1,6 @@
 {
   "name": "@vn-gis/map",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "JavaScript library for rendering Vietnam GIS maps with provinces, wards, and custom GeoJSON layers",
   "keywords": [
     "vietnam",
