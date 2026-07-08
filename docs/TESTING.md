@@ -1,463 +1,327 @@
-# Hướng dẫn kiểm thử trước khi Release
+# Hướng dẫn Testing — `tests/` & vitest
 
-Tài liệu này mô tả toàn bộ các bước kiểm thử cần chạy để chắc chắn `@vn-gis/map` sẵn sàng phát hành. Chạy hết checklist này trước khi làm theo [RELEASE.md](./RELEASE.md).
+Package dùng [Vitest](https://vitest.dev/) làm test framework với môi trường jsdom, V8 coverage. Tài liệu này mô tả cách test hiện có, cách chạy, và cách viết test mới.
 
----
-
-## 1. Chuẩn bị môi trường
-
-Yêu cầu:
-
-- Node.js **>= 18** (CI test trên 18, 20, 22).
-- npm (đi kèm Node) hoặc trình quản lý tương thích.
-
-Cài dependencies từ lockfile để đảm bảo tái lập chính xác môi trường CI:
-
-```bash
-npm ci
-```
-
-> Dùng `npm ci` thay vì `npm install` khi kiểm thử tiền-release: nó cài đúng theo `package-lock.json`, phát hiện lệch lockfile, và giống hệt môi trường CI.
+> Tài liệu này là bản phân tích chi tiết. File `TESTING.md` gốc trong repo là một bản gốc ngắn hơn — bản này chỉ bổ sung.
 
 ---
 
-## 2. Chạy toàn bộ pipeline kiểm thử
+## 1. Cấu hình test
 
-Chạy tuần tự đúng thứ tự CI. Nếu bước nào đỏ, dừng lại và sửa trước khi tiếp tục.
-
-```bash
-npm run typecheck      # tsc --noEmit
-npm run lint           # eslint src tests
-npm run format:check   # prettier --check
-npm run test           # vitest run
-npm run build          # rollup build ESM/CJS/UMD + .d.ts
-```
-
-Hoặc gộp một dòng:
-
-```bash
-npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build
-```
-
-### Ý nghĩa từng bước
-
-| Lệnh | Mục đích | Khi đỏ thì |
-| --- | --- | --- |
-| `typecheck` | Bắt lỗi kiểu TypeScript trên toàn source | Sửa lỗi type, không dùng `any` để né |
-| `lint` | Quy tắc code + tích hợp Prettier | Chạy `npm run lint:fix` |
-| `format:check` | Định dạng nhất quán | Chạy `npm run format` |
-| `test` | Unit test (Vitest) | Sửa code hoặc cập nhật test |
-| `build` | Đảm bảo bundle & type declaration tạo được | Xem log Rollup, sửa cấu hình/import |
-
----
-
-## 3. Kiểm thử với coverage
-
-```bash
-npm run test:coverage
-```
-
-- Báo cáo text in ra terminal; báo cáo HTML nằm ở `coverage/index.html`.
-- Xem file nào coverage thấp và cân nhắc bổ sung test cho core (`ApiClient`, `LayerManager`, `EventEmitter`, `utils`).
-
-Mở báo cáo HTML:
-
-```bash
-# macOS
-open coverage/index.html
-# Windows
-start coverage/index.html
-# Linux
-xdg-open coverage/index.html
-```
-
----
-
-## 4. Chế độ watch khi phát triển
-
-Khi đang sửa và muốn test chạy lại tự động:
-
-```bash
-npm run test:watch     # Vitest watch
-npm run build:watch    # Rollup watch
-```
-
----
-
-## 5. Kiểm tra nội dung package sẽ publish
-
-Rất quan trọng: xác nhận đúng file được đóng gói, không lọt file thừa (source, test, config).
-
-```bash
-npm pack --dry-run
-```
-
-Kiểm tra output:
-
-- [ ] Có `dist/index.esm.js`, `dist/index.cjs.js`, `dist/index.umd.js`.
-- [ ] Có `dist/index.d.ts`.
-- [ ] Có `dist/renderers/leaflet.*` và `dist/renderers/maplibre.*` (gồm cả `.d.ts`).
-- [ ] Có `README.md`, `CHANGELOG.md`, `LICENSE`.
-- [ ] **Không** có `src/`, `tests/`, `node_modules/`, file config.
-
-> Danh sách file được điều khiển bởi trường `files` trong `package.json`. Nếu thấy thiếu/thừa, chỉnh `files`.
-
-Tạo tarball thật để soi kỹ (tuỳ chọn):
-
-```bash
-npm pack
-tar -tf vn-gis-map-*.tgz
-rm vn-gis-map-*.tgz
-```
-
----
-
-## 6. Kiểm thử tích hợp cục bộ (smoke test)
-
-Xác nhận package hoạt động thật khi được cài vào một project khác, trước khi publish.
-
-### Cách A — `npm pack` + cài từ tarball (khuyến nghị)
-
-```bash
-# tại thư mục package
-npm run build
-npm pack                      # tạo vn-gis-map-<version>.tgz
-
-# tại một project thử nghiệm riêng
-mkdir /tmp/test-vn-gis && cd /tmp/test-vn-gis
-npm init -y
-npm install /đường/dẫn/tới/vn-gis-map-<version>.tgz leaflet
-```
-
-Tạo file thử `index.mjs`:
-
-```js
-import { VNGisMap, VN_BOUNDS } from '@vn-gis/map';
-console.log('Bounds VN:', VN_BOUNDS);
-console.log('VNGisMap loaded:', typeof VNGisMap);
-```
-
-```bash
-node index.mjs
-```
-
-Kỳ vọng: in ra bounds và `VNGisMap loaded: function`.
-
-### Cách B — `npm link`
-
-```bash
-# tại thư mục package
-npm run build
-npm link
-
-# tại project thử
-npm link @vn-gis/map
-```
-
-> Nhớ `npm unlink` sau khi test xong để tránh nhầm lẫn.
-
-### Kiểm tra resolve type & entrypoint
-
-Trong project thử, kiểm tra cả 3 entrypoint resolve đúng:
+**File**: `vitest.config.ts`
 
 ```ts
-import { VNGisMap } from '@vn-gis/map';
-import { LeafletRenderer } from '@vn-gis/map/leaflet';
-import { MapLibreRenderer } from '@vn-gis/map/maplibre';
-```
+import { defineConfig } from 'vitest/config';
 
-TypeScript không được báo lỗi resolve; autocomplete hiển thị đúng type.
-
----
-
-## 7. Kiểm thử trên Next.js (hoặc framework SSR)
-
-Leaflet và MapLibre phụ thuộc `window`/`document`, nên cần tránh server-side rendering.
-
-### Bước 1 — Tạo project Next.js test
-
-```bash
-npx create-next-app@latest test-vn-gis-nextjs
-cd test-vn-gis-nextjs
-```
-
-Chọn TypeScript, App Router (khuyến nghị), Tailwind (tuỳ chọn).
-
-### Bước 2 — Cài package từ tarball
-
-Tại thư mục package chính, build và tạo tarball:
-
-```bash
-cd /path/to/vn-gis-map-package
-npm run build
-npm pack
-```
-
-Sao chép file `.tgz` vào project Next.js và cài:
-
-```bash
-cd test-vn-gis-nextjs
-npm install ../vn-gis-map-package/vn-gis-map-0.1.0.tgz leaflet
-npm install --save-dev @types/leaflet
-```
-
-### Bước 3 — Tạo Map component (Client Component)
-
-Tạo `components/VNMap.tsx`:
-
-```tsx
-'use client';
-
-import { useEffect, useRef } from 'react';
-import type { VNGisMap as VNGisMapType } from '@vn-gis/map';
-
-export default function VNMap() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<VNGisMapType | null>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-
-    // Dynamic import để tránh SSR
-    Promise.all([
-      import('@vn-gis/map'),
-      import('@vn-gis/map/leaflet'),
-      import('leaflet'),
-      import('leaflet/dist/leaflet.css'),
-    ]).then(([{ VNGisMap }, { LeafletRenderer }, L]) => {
-      mapRef.current = new VNGisMap(
-        {
-          container: containerRef.current!,
-          renderer: 'leaflet',
-          apiBaseUrl: 'https://api.example.com',
-          token: 'YOUR_TOKEN',
-          layers: { provinces: true },
-          onProvinceClick: (f) => {
-            console.log('Clicked:', f.properties?.name);
-          },
-        },
-        () => new LeafletRenderer(L),
-      );
-    });
-
-    return () => {
-      mapRef.current?.destroy();
-      mapRef.current = null;
-    };
-  }, []);
-
-  return <div ref={containerRef} className="w-full h-screen" />;
-}
-```
-
-### Bước 4 — Sử dụng trong page
-
-Tạo `app/map/page.tsx`:
-
-```tsx
-import dynamic from 'next/dynamic';
-
-const VNMap = dynamic(() => import('@/components/VNMap'), {
-  ssr: false,
-  loading: () => <div className="w-full h-screen bg-gray-200">Loading map...</div>,
-});
-
-export default function MapPage() {
-  return (
-    <main>
-      <h1 className="text-2xl p-4">VN GIS Map Test</h1>
-      <VNMap />
-    </main>
-  );
-}
-```
-
-### Bước 5 — Chạy dev server và kiểm tra
-
-```bash
-npm run dev
-```
-
-Mở http://localhost:3000/map và kiểm tra:
-
-- [ ] Bản đồ render (không lỗi hydration)
-- [ ] Tỉnh/thành hiển thị
-- [ ] Click vào tỉnh → console log đúng
-- [ ] Không có warning SSR trong terminal
-- [ ] Hot reload hoạt động
-
-### Bước 6 — Build production
-
-```bash
-npm run build
-npm start
-```
-
-Kiểm tra lại trên http://localhost:3000/map để đảm bảo production build không bị lỗi.
-
-### Lưu ý khi dùng với SSR
-
-- **Luôn dùng `'use client'`** và `dynamic(..., { ssr: false })` cho component chứa map.
-- **Import CSS trong `useEffect`** hoặc component client để tránh SSR xử lý stylesheet.
-- **MapLibre** cũng cần xử lý tương tự (thay `@vn-gis/map/leaflet` → `@vn-gis/map/maplibre`).
-- Nếu dùng Pages Router, wrap component map trong `dynamic(() => import(...), { ssr: false })`.
-
----
-
-## 8. Kiểm thử thủ công trên trình duyệt (examples)
-
-Package có sẵn ví dụ trong `examples/`:
-
-```bash
-npm run build
-
-# phục vụ static bằng server bất kỳ
-npx serve .
-# hoặc
-python -m http.server 8080
-```
-
-Mở trong trình duyệt và kiểm tra bằng mắt:
-
-- [ ] `examples/leaflet.html` — bản đồ hiển thị, tỉnh/phường render, click/hover hoạt động.
-- [ ] `examples/maplibre.html` — tương tự với renderer MapLibre.
-- [ ] Console trình duyệt không có lỗi.
-
-> Các ví dụ cần API vn-gis. Cập nhật `apiBaseUrl`/`token` trong file HTML nếu cần trỏ tới API thật.
-
----
-
-## 9. Auth — đăng nhập và kiểm tra credentials
-
-Có 2 cách khởi tạo `ApiClient`:
-
-### Cách 1: Cung cấp token trực tiếp
-
-```ts
-const client = new ApiClient({
-  baseUrl: 'https://api.example.com',
-  token: 'YOUR_TOKEN',
+export default defineConfig({
+  test: {
+    environment: 'jsdom',                        // Môi trường DOM giả lập
+    globals: true,                               // Không cần import describe/it/expect
+    coverage: {
+      provider: 'v8',                            // Coverage engine
+      reporter: ['text', 'json', 'html'],        // 3 dạng output
+      include: ['src/**/*.ts'],
+      exclude: ['src/index.ts'],                 // file re-export không cần test
+    },
+  },
+  resolve: {
+    alias: {
+      '@': '/src',                               // hỗ trợ alias import nếu cần
+    },
+  },
 });
 ```
 
-### Cách 2: Cung cấp username + password
+> `globals: true` nên ta không phải `import { describe, it, expect } from 'vitest'` mặc dù các test file vẫn import để rõ ràng.
 
-Nếu không có token, cung cấp `username` + `password`. ApiClient tự động gọi `POST /v1/auth/login` để lấy JWT khi gọi API đầu tiên:
+### Scripts (package.json)
 
-```ts
-const client = new ApiClient({
-  baseUrl: 'https://api.example.com',
-  username: 'user@example.com',
-  password: 'your-password',
-});
-
-// Lần gọi API đầu tiên → tự động login → lấy token
-// Các lần sau → dùng lại token đã cache
-const provinces = await client.getProvinces();
-```
-
-**Ưu điểm**: không cần lưu token trong code/config, chỉ cần user/password.
-
-### Kiểm tra credentials trước khi khởi tạo VNGisMap
-
-```ts
-const client = new ApiClient({
-  baseUrl: 'https://api.example.com',
-  username: 'user@example.com',
-  password: 'your-password',
-});
-
-const result = await client.validate();
-if (!result.valid) {
-  alert(`Lỗi: ${result.reason}`);
-  return;
-}
-
-const map = new VNGisMap(config, () => new LeafletRenderer(L));
-```
-
-### Kiểm tra credentials từ form đăng nhập
-
-```ts
-async function onLogin({ baseUrl, username, password }: Credentials) {
-  const client = new ApiClient({ baseUrl, username, password });
-  const result = await client.validate();
-  if (!result.valid) {
-    setError(result.reason);
-    return;
-  }
-  saveSession({ baseUrl, token: client.getToken?.() ?? '' });
-  initMap();
-}
-```
-
-### Gọi login thủ công
-
-```ts
-const result = await client.login('https://api.example.com', 'user@example.com', 'password');
-// result.accessToken — JWT string
-// result.user         — { id, email, role }
-// result.expiresIn    — vd: '7d'
-```
-
-### Kết quả trả về
-
-**ValidateResult:**
-
-| Trường | Mô tả |
+| Lệnh | Mô tả |
 |---|---|
-| `valid` | `true` nếu token hợp lệ; `false` nếu không |
-| `user` | Thông tin user (`{ id, email, role }`) khi `valid = true` |
-| `reason` | Thông báo lỗi bằng tiếng Việt khi `valid = false` |
-
-**LoginResult:**
-
-| Trường | Mô tả |
-|---|---|
-| `accessToken` | JWT string |
-| `user` | `{ id, email, role }` |
-| `expiresIn` | Thời hạn token, vd: `'7d'` |
-
-### Các lỗi có thể nhận được
-
-| Lý do | Nguyên nhân |
-|---|---|
-| `"Chưa có token..."` | Chưa cung cấp `token` hoặc `username`/`password` |
-| `"Token không hợp lệ hoặc đã hết hạn..."` | Token sai hoặc JWT đã hết hạn |
-| `"Không thể kết nối đến ..."` | `baseUrl` sai hoặc server offline |
-| `"HTTP 403"` | Token hợp lệ nhưng không đủ quyền |
-| `"HTTP 500"` | Lỗi server bên phía API |
+| `npm test` | `vitest run` — chạy tất cả test 1 lần (single-run). |
+| `npm run test:watch` | `vitest` — chạy watch mode, rerun khi file thay đổi. |
+| `npm run test:coverage` | `vitest run --coverage` — sinh báo cáo coverage vào `coverage/`. |
 
 ---
 
-## 10. Kiểm tra tương thích Node (tuỳ chọn)
+## 2. Cấu trúc thư mục `tests/`
 
-CI đã chạy matrix Node 18/20/22. Nếu muốn kiểm tra cục bộ với nhiều phiên bản, dùng `nvm`:
+```
+tests/
+├── apiclient.test.ts       ← test ApiClient
+├── bounds.test.ts          ← test hằng số địa lý
+├── cache.test.ts           ← test class Cache
+├── eventemitter.test.ts    ← test EventEmitter
+├── geojson.test.ts         ← test type guards
+├── layermanager.test.ts    ← test LayerManager (với mock renderer)
+└── style.test.ts           ← test mergeStyle và style presets
+```
+
+Mỗi file test là một mirror module. Quy ước đặt tên: `<moduleName>.test.ts`.
+
+---
+
+## 3. Tổng quan test hiện có (~60 test case)
+
+### `apiclient.test.ts` (~30 case) — nhiều nhất
+
+Bao phủ toàn bộ `ApiClient`. Chia thành **4 nhóm describe**:
+
+| Nhóm | Test chính |
+|---|---|
+| `ApiClient` | getProvinces, getWards, reverseGeocode, caching, error handling, clearCache, setToken. |
+| `ApiClient response format` | raw / envelope / auto (auto-detect). |
+| `ApiClient.validate()` | 200 OK, 401, 403, network error, override, trailing slash, extra fields, no-token. |
+| `ApiClient.login()` | success, override, 401, 422, array messages, unexpected shape. |
+| `ApiClient auto-login (username + password)` | first-call auto-login, pre-existing token, cache-after-login, auto-login fail, setToken-no-relogin, validate-no-credentials. |
+
+Kỹ thuật chính: **mock `fetch` toàn cục** qua `vi.stubGlobal('fetch', fetchMock)`.
+
+```ts
+function mockJsonResponse(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    statusText: ok ? 'OK' : 'Error',
+    json: async () => body,
+  } as unknown as Response;
+}
+
+function mockJsonClient() {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+beforeEach(() => {
+  fetchMock = mockJsonClient();
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+```
+
+### `bounds.test.ts` (~5 case)
+
+- `north > south`, `east > west`.
+- `center` nằm trong bounds.
+- `asBounds` đúng format `[[south, west], [north, east]]`.
+- `VN_DEFAULT_ZOOM` hợp lý (5-7).
+- `VN_CENTER_LATLNG/LNGLAT` đồng bộ (cùng giá trị nhưng khác thứ tự).
+
+### `cache.test.ts` (~9 case)
+
+| Test | Mục đích |
+|---|---|
+| `stores and retrieves values` | Round-trip set/get. |
+| `returns undefined for missing keys` | Không throw, trả `undefined`. |
+| `expires entries after TTL` | Sau khi hết TTL, `get` trả `undefined` và entry bị xoá. |
+| `honors per-entry TTL override` | `set(key, value, 5)` dùng TTL riêng. |
+| `has() reflects expiry` | `has` cũng trả `false` khi hết hạn. |
+| `delete removes an entry` | |
+| `clear empties the cache` | |
+| `purgeExpired drops only expired entries` | |
+| `size purges expired entries before counting` | Lazy purge. |
+
+Dùng `vi.useFakeTimers()` và `vi.advanceTimersByTime(ms)` để mô phỏng thời gian.
+
+### `eventemitter.test.ts` (~6 case)
+
+| Test | Mục đích |
+|---|---|
+| registers and fires handlers with typed payload | Smoke test cơ bản. |
+| supports multiple handlers for the same event | Set semantics. |
+| removes a handler with off | off hoạt động. |
+| once only fires a single time | once = wrapper tự off. |
+| isolates errors thrown in handlers | Lỗi 1 handler không ảnh hưởng handler khác (spy `console.error`). |
+| removeAllListeners clears handlers | Có/không truyền event. |
+
+### `geojson.test.ts` (~6 case)
+
+- `isFeatureCollection` đúng với FC và Feature/null/string/number.
+- `isFeature` đúng với Feature và FC/null/undefined/array.
+
+### `layermanager.test.ts` (~7 case)
+
+Mock `IRenderer` qua `vi.fn()` để kiểm tra `LayerManager` gọi đúng method của renderer:
+
+```ts
+function createMockRenderer(): IRenderer {
+  return {
+    initialize: vi.fn(),
+    setView: vi.fn(),
+    fitBounds: vi.fn(),
+    addGeoJSON: vi.fn((_g, _o, id?: string) => id ?? 'auto-id'),
+    removeLayer: vi.fn(),
+    setLayerStyle: vi.fn(),
+    setLayerVisibility: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    onLayerClick: vi.fn(),
+    offLayerClick: vi.fn(),
+    destroy: vi.fn(),
+    isInitialized: true,
+  };
+}
+```
+
+| Test | Mục đích |
+|---|---|
+| adds a layer and registers it | Smoke: `add` → `registry.has(...) = true`, `size = 1`. |
+| replaces an existing layer with the same id | Idempotency — gọi `add` 2 lần cùng id. |
+| removes a layer | |
+| clears layers optionally filtered by type | `clear('wards')` chỉ xoá wards. |
+| updates style and merges into registry | Style merge đúng. |
+| toggles visibility | `toggle` đảo ngược `visible`, gọi renderer.setLayerVisibility. |
+| lists layers filtered by type | `list('wards')` chỉ trả wards layer. |
+
+### `style.test.ts`
+
+- `mergeStyle` không mutate, override đúng.
+- Style presets có đầy đủ các field bắt buộc (`fillColor`, `strokeColor`...).
+
+---
+
+## 4. Cách chạy
 
 ```bash
-nvm install 18 && nvm use 18 && npm ci && npm test
-nvm install 20 && nvm use 20 && npm ci && npm test
-nvm install 22 && nvm use 22 && npm ci && npm test
+npm test                 # chạy 1 lần
+npm run test:watch       # watch mode
+npm run test:coverage    # chạy + sinh coverage
+```
+
+Báo cáo coverage sinh ra ở `coverage/index.html` — mở trên browser để xem chi tiết.
+
+---
+
+## 5. Mẹo viết test mới
+
+### 5.1. Template cơ bản
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MyClass } from '../src/path/MyClass';
+
+describe('MyClass', () => {
+  beforeEach(() => {
+    // setup
+  });
+
+  it('does something', () => {
+    const instance = new MyClass();
+    expect(instance.method()).toBe(42);
+  });
+});
+```
+
+### 5.2. Mock fetch (cho ApiClient)
+
+```ts
+const fetchMock = vi.fn();
+vi.stubGlobal('fetch', fetchMock);
+afterEach(() => vi.unstubAllGlobals());
+```
+
+### 5.3. Mock thời gian
+
+```ts
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+vi.advanceTimersByTime(11_000);    // tua tới 11 giây
+```
+
+### 5.4. Mock renderer
+
+```ts
+const renderer = {
+  initialize: vi.fn(),
+  setView: vi.fn(),
+  // ... tất cả method của IRenderer
+} as unknown as IRenderer;
+```
+
+### 5.5. Test async / promise
+
+```ts
+it('rejects with error', async () => {
+  await expect(apiCall()).rejects.toBeInstanceOf(ApiClientError);
+});
+
+it('resolves with value', async () => {
+  await expect(apiCall()).resolves.toEqual({ ... });
+});
+```
+
+### 5.6. Test emit / listener
+
+```ts
+const handler = vi.fn();
+emitter.on('click', handler);
+emitter.emit('click', { target: null });
+expect(handler).toHaveBeenCalledOnce();
+expect(handler).toHaveBeenCalledWith({ type: 'click', target: null });
+```
+
+### 5.7. Test cleanup
+
+Luôn reset mocks/spies trong `afterEach`:
+
+```ts
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 ```
 
 ---
 
-## 11. Checklist tiền-release
+## 6. Coverage mục tiêu
+
+Trong CI, job `test` chạy `npm run test:coverage` và upload thư mục `coverage/` như artifact.
+
+Hiện tại `vitest.config.ts` cấu hình:
+
+- `include: src/**/*.ts`
+- `exclude: src/index.ts` (chỉ là re-export)
+
+Mục tiêu (có thể check qua coverage/index.html):
+
+| Module | Test |
+|---|---|
+| `ApiClient` | ✅ cao |
+| `LayerManager` | ✅ cao |
+| `EventEmitter` | ✅ 100% |
+| `Cache` | ✅ 100% |
+| `bounds.ts` (constants) | ✅ 100% |
+| `geojson.types.ts` (guards) | ✅ 100% |
+| `style.ts` (mergeStyle + presets) | ✅ cao |
+| `VNGisMap` (lớp facade) | ⚠️ thấp — nên test với mock ApiClient/LayerManager/renderer |
+| Renderers | ⚠️ thấp — cần DOM thật, tích hợp ở level cao hơn |
+
+---
+
+## 7. Renderers không test trực tiếp — vì sao?
+
+`LeafletRenderer` / `MapLibreRenderer` không có unit test trong `tests/`, lý do:
+
+- Chúng phụ thuộc DOM thật, `window.L` / `window.maplibregl`, tile server... — không phù hợp jsdom.
+- Kiểm thử chính là dùng **examples HTML** chạy trên browser thật (`examples/leaflet.html`, `examples/maplibre.html`) và demo qua framework integration (xem README).
+
+Nếu cần test renderer, hãy dùng **Playwright/Cypress** end-to-end test riêng.
+
+---
+
+## 8. Workflow làm việc với test
 
 ```
-[ ] npm ci chạy sạch (không lệch lockfile)
-[ ] npm run typecheck   -> xanh
-[ ] npm run lint        -> xanh
-[ ] npm run format:check-> xanh
-[ ] npm run test        -> tất cả test pass
-[ ] npm run test:coverage -> coverage ở mức chấp nhận được
-[ ] npm run build       -> tạo đủ dist + .d.ts
-[ ] npm pack --dry-run  -> đúng nội dung package
-[ ] Smoke test cài từ tarball chạy được
-[ ] Auth / login flow chạy đúng (nếu có thay đổi auth)
-[ ] Validate credentials chạy đúng (nếu có thay đổi auth)
-[ ] Test trên project Next.js (nếu có thay đổi API/renderer)
-[ ] Examples chạy đúng trên trình duyệt (nếu có thay đổi renderer)
+1. Code feature mới trong src/
+2. Viết test trong tests/<module>.test.ts
+3. Chạy npm run test:watch     ← iter nhanh
+4. Chạy npm run test:coverage  ← xem đã cover đủ chưa
+5. Mở coverage/index.html
+6. Commit
 ```
 
-Khi toàn bộ checklist xanh, chuyển sang [RELEASE.md](./RELEASE.md) để phát hành.
+Khi test fail, Vitest hiển thị stack trace rõ ràng trong terminal.
