@@ -98,9 +98,23 @@ jobs:
           fi
 
       - name: Publish
-        # Trusted Publishing (OIDC): npm CLI tự xin token từ GitHub Actions
-        # Không cần NODE_AUTH_TOKEN. Token được GitHub ký, hết hạn ~5 phút.
-        run: npm publish --provenance --access public --tag ${{ steps.disttag.outputs.tag }}
+        # Strategy: Thử Trusted Publishing (OIDC) trước, fallback sang Granular Token nếu lỗi
+        run: |
+          echo "=== Bước 1: Thử Trusted Publishing (OIDC) ==="
+          if npm publish --provenance --access public --tag ${{ steps.disttag.outputs.tag }}; then
+            echo "✓ Trusted Publishing thành công!"
+          else
+            echo "✗ Trusted Publishing thất bại, thử Granular Token..."
+            echo "=== Bước 2: Fallback sang Granular Token ==="
+            if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+              npm publish --access public --tag ${{ steps.disttag.outputs.tag }}
+            else
+              echo "::error::Cả OIDC và Granular Token đều không hoạt động."
+              exit 1
+            fi
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github-release:
     name: Create GitHub Release
