@@ -15,8 +15,12 @@
   "author": "vn-gis",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vn-gis/map.git"
+    "url": "git+https://github.com/github-nqvnlc/vn-gis-map.git"
   },
+  "bugs": {
+    "url": "https://github.com/github-nqvnlc/vn-gis-map/issues"
+  },
+  "homepage": "https://github.com/github-nqvnlc/vn-gis-map#readme",
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
   "browser": "dist/index.umd.js",
