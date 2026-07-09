@@ -1,48 +1,32 @@
-import type { Bounds, LngLat } from '../types';
-
 /**
- * Bounds địa lý của Việt Nam (WGS84)
+ * Vietnam map constants and bounds
  */
-export const VN_BOUNDS: {
-  north: number;
-  south: number;
-  east: number;
-  west: number;
-  center: LngLat;
-  asBounds: Bounds;
-} = {
-  north: 23.393395,
-  south: 8.179199,
-  east: 109.469229,
-  west: 102.144598,
-  center: [106.0, 16.0],
-  asBounds: [
-    [8.179199, 102.144598],
-    [23.393395, 109.469229],
-  ],
-} as const;
 
-/**
- * Zoom mặc định để hiển thị toàn bộ Việt Nam
- */
+import type { BoundsTuple, LatLng } from '../types';
+
+/** Vietnam geographic bounds: Southwest to Northeast */
+export const VN_BOUNDS: BoundsTuple = [
+  [8.18, 102.14], // Southwest corner [lat, lng]
+  [23.24, 109.47], // Northeast corner [lat, lng]
+];
+
+/** Vietnam center point [lat, lng] */
+export const VN_CENTER: LatLng = [14.0583, 108.2772];
+
+/** Default zoom level when displaying whole Vietnam */
 export const VN_DEFAULT_ZOOM = 6;
 
-/**
- * Trung tâm Việt Nam (Leaflet dùng [lat, lng], chú ý thứ tự)
- */
-export const VN_CENTER_LATLNG: [number, number] = [16.0, 106.0];
+/** Minimum zoom level */
+export const VN_MIN_ZOOM = 5;
 
-/**
- * Trung tâm Việt Nam theo format [lng, lat] (MapLibre)
- */
-export const VN_CENTER_LNGLAT: LngLat = [106.0, 16.0];
+/** Maximum zoom level */
+export const VN_MAX_ZOOM = 18;
 
-/**
- * Min/max zoom hợp lệ
- */
-export const VN_MAP_ZOOM = {
-  min: 4,
-  max: 18,
-  province: 8,
-  ward: 11,
-} as const;
+/** Zoom level for city/province view */
+export const VN_CITY_ZOOM = 12;
+
+/** Zoom level for district view */
+export const VN_DISTRICT_ZOOM = 14;
+
+/** Zoom level for ward/street view */
+export const VN_STREET_ZOOM = 16;

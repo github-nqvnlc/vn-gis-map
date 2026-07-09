@@ -1,312 +1,256 @@
-import type * as L from 'leaflet';
-import type { VNGeoJSONCollection, VNGeoJSONFeature } from '../../types/api.types';
+/**
+ * Leaflet renderer implementation
+ */
+
 import type {
-  LayerOptions,
-  LayerStyle,
-  LngLat,
-  Bounds,
-  MapEvent,
+  MapOptions,
+  LatLng,
+  BoundsTuple,
+  MarkerOptions,
+  PolygonOptions,
+  GeoJSONOptions,
   EventHandler,
-  PopupOptions,
-} from '../../types/config.types';
-import type { IRenderer, MapInitOptions } from '../base/IRenderer';
-import { mergeStyle } from '../../utils/style';
+  EventPayload,
+} from '../../types';
 
-/**
- * Kiểu tối thiểu cho global Leaflet (namespace `L`)
- * Được resolve từ peer dependency `leaflet` (import động hoặc global window.L)
- */
-type LeafletModule = typeof import('leaflet');
+// Map to store layer instances
+const layerInstances = new Map<string, L.Layer>();
 
-interface LeafletLayerEntry {
-  layer: L.GeoJSON;
-  options: LayerOptions;
-  style: LayerStyle;
-  clickHandlers: Set<(feature: VNGeoJSONFeature) => void>;
-}
-
-const DEFAULT_TILE_URL = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
-const DEFAULT_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
-/**
- * Renderer adapter dùng Leaflet.
- *
- * Leaflet phải được cung cấp: hoặc truyền vào constructor, hoặc có sẵn global `window.L`.
- */
-export class LeafletRenderer implements IRenderer {
-  private L: LeafletModule;
+export class LeafletRenderer {
   private map: L.Map | null = null;
-  private tileLayer: L.TileLayer | null = null;
-  private layers = new Map<string, LeafletLayerEntry>();
-  private layerCounter = 0;
   private eventHandlers = new Map<string, Set<EventHandler>>();
+  private L: typeof import('leaflet') | null = null;
 
-  /**
-   * @param leaflet - Instance của Leaflet. Nếu không truyền sẽ dùng global `window.L`.
-   */
-  constructor(leaflet?: LeafletModule) {
-    const resolved =
-      leaflet ??
-      (typeof window !== 'undefined' ? (window as unknown as { L?: LeafletModule }).L : undefined);
-    if (!resolved) {
-      throw new Error(
-        '[LeafletRenderer] Leaflet không khả dụng. Hãy cài `leaflet` và truyền vào constructor, hoặc load global window.L.',
-      );
-    }
-    this.L = resolved;
-  }
+  initialize(container: HTMLElement, options: MapOptions): void {
+    // Dynamically import Leaflet
+    import('leaflet').then((leafletModule) => {
+      this.L = leafletModule.default || leafletModule;
+      const L = this.L;
 
-  get isInitialized(): boolean {
-    return this.map !== null;
-  }
-
-  initialize(container: HTMLElement, options: MapInitOptions): void {
-    if (this.map) {
-      throw new Error('[LeafletRenderer] Map đã được khởi tạo.');
-    }
-    const [lng, lat] = options.center;
-    this.map = this.L.map(container, {
-      center: [lat, lng],
-      zoom: options.zoom,
-      minZoom: options.minZoom,
-      maxZoom: options.maxZoom,
-    });
-
-    this.tileLayer = this.L.tileLayer(options.tileUrl ?? DEFAULT_TILE_URL, {
-      attribution: options.attribution ?? DEFAULT_ATTRIBUTION,
-      maxZoom: options.maxZoom ?? 19,
-    });
-    this.tileLayer.addTo(this.map);
-
-    this.map.whenReady(() => {
-      this.dispatch('ready', { target: this.map });
-    });
-
-    this.map.on('click', (e: L.LeafletMouseEvent) => {
-      this.dispatch('click', {
-        target: this.map,
-        lngLat: [e.latlng.lng, e.latlng.lat],
+      // Fix Leaflet's default icon issue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (L.Icon.Default.prototype as any)['_getIconUrl'];
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       });
+
+      const mapOptions: L.MapOptions = {
+        center: [options.center[0], options.center[1]],
+        zoom: options.zoom,
+        minZoom: options.minZoom,
+        maxZoom: options.maxZoom,
+        scrollWheelZoom: options.scrollWheelZoom,
+      };
+
+      if (options.bounds) {
+        mapOptions.maxBounds = L.latLngBounds(
+          L.latLng(options.bounds[0][0], options.bounds[0][1]),
+          L.latLng(options.bounds[1][0], options.bounds[1][1]),
+        );
+      }
+
+      this.map = L.map(container, mapOptions);
+
+      // Add OpenStreetMap tile layer
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(this.map);
+
+      // Set up event forwarding
+      this.setupEventForwarding();
     });
-    this.map.on('moveend', () => this.dispatch('moveend', { target: this.map }));
-    this.map.on('zoomend', () => this.dispatch('zoomend', { target: this.map }));
-    this.map.on('movestart', () => this.dispatch('movestart', { target: this.map }));
-    this.map.on('zoomstart', () => this.dispatch('zoomstart', { target: this.map }));
   }
 
-  setView(center: LngLat, zoom: number): void {
-    this.assertMap();
-    const [lng, lat] = center;
-    this.map!.setView([lat, lng], zoom);
-  }
+  private setupEventForwarding(): void {
+    if (!this.map || !this.L) return;
 
-  fitBounds(bounds: Bounds): void {
-    this.assertMap();
-    const [[south, west], [north, east]] = bounds;
-    this.map!.fitBounds([
-      [south, west],
-      [north, east],
-    ]);
-  }
+    const eventsToForward = [
+      'click',
+      'dblclick',
+      'mousedown',
+      'mouseup',
+      'mouseover',
+      'mouseout',
+      'mousemove',
+      'contextmenu',
+      'zoomstart',
+      'zoomend',
+      'zoomlevelschange',
+      'movestart',
+      'move',
+      'moveend',
+      'dragstart',
+      'drag',
+      'dragend',
+      'resize',
+    ];
 
-  addGeoJSON(geojson: VNGeoJSONCollection, options: LayerOptions, layerId?: string): string {
-    this.assertMap();
-    const id = layerId ?? `layer-${++this.layerCounter}`;
-    const baseStyle = options.style ?? {};
-    const interactive = options.interactive !== false;
-
-    const clickHandlers = new Set<(feature: VNGeoJSONFeature) => void>();
-
-    const geoLayer = this.L.geoJSON(geojson as unknown as GeoJSON.GeoJsonObject, {
-      style: (feature) => this.toLeafletPathStyle(baseStyle, options, feature as VNGeoJSONFeature),
-      onEachFeature: (feature, layer) => {
-        const vnFeature = feature as VNGeoJSONFeature;
-        if (interactive) {
-          this.bindFeatureInteractions(layer, vnFeature, options, baseStyle, clickHandlers);
-        }
-      },
+    eventsToForward.forEach((eventName) => {
+      this.map!.on(
+        eventName,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (e: any) => {
+          const handlers = this.eventHandlers.get(eventName);
+          if (handlers) {
+            const payload: EventPayload = {
+              type: eventName,
+              timestamp: Date.now(),
+              data: {
+                lat: e.latlng?.lat,
+                lng: e.latlng?.lng,
+                layer: e.layer,
+              },
+            };
+            handlers.forEach((handler) => handler(payload));
+          }
+        },
+      );
     });
 
-    if (options.zIndex !== undefined && 'setZIndex' in geoLayer) {
-      (geoLayer as unknown as { setZIndex: (z: number) => void }).setZIndex(options.zIndex);
-    }
-
-    geoLayer.addTo(this.map!);
-    this.layers.set(id, { layer: geoLayer, options, style: baseStyle, clickHandlers });
-    return id;
+    // Emit ready event
+    setTimeout(() => {
+      this.emit('ready', { map: this.map });
+    }, 0);
   }
 
-  removeLayer(layerId: string): void {
-    const entry = this.layers.get(layerId);
-    if (!entry || !this.map) return;
-    this.map.removeLayer(entry.layer);
-    this.layers.delete(layerId);
-  }
+  addMarker(id: string, options: MarkerOptions): void {
+    if (!this.map || !this.L) return;
 
-  setLayerStyle(layerId: string, style: LayerStyle): void {
-    const entry = this.layers.get(layerId);
-    if (!entry) return;
-    entry.style = mergeStyle(entry.style, style);
-    entry.layer.setStyle((feature) =>
-      this.toLeafletPathStyle(entry.style, entry.options, feature as VNGeoJSONFeature),
-    );
-  }
+    const L = this.L;
+    const latlng = L.latLng(options.lat, options.lng);
+    let marker: L.Marker;
 
-  setLayerVisibility(layerId: string, visible: boolean): void {
-    const entry = this.layers.get(layerId);
-    if (!entry || !this.map) return;
-    if (visible) {
-      if (!this.map.hasLayer(entry.layer)) entry.layer.addTo(this.map);
+    if (options.icon) {
+      const iconOptions = options.icon;
+      // Only use Leaflet icon options
+      const leafIcon = iconOptions as {
+        iconUrl?: string;
+        iconSize?: [number, number];
+        iconAnchor?: [number, number];
+        popupAnchor?: [number, number];
+      };
+      const icon = L.icon({
+        iconUrl: leafIcon.iconUrl ?? 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        iconSize: leafIcon.iconSize as L.PointExpression | undefined,
+        iconAnchor: leafIcon.iconAnchor as L.PointExpression | undefined,
+        popupAnchor: leafIcon.popupAnchor as L.PointExpression | undefined,
+      });
+      marker = L.marker(latlng, { icon });
     } else {
-      this.map.removeLayer(entry.layer);
+      marker = L.marker(latlng);
+    }
+
+    if (options.title) {
+      marker.bindTooltip(options.title);
+    }
+
+    if (options.popup) {
+      marker.bindPopup(options.popup);
+    }
+
+    marker.addTo(this.map);
+    layerInstances.set(id, marker);
+  }
+
+  addPolygon(id: string, options: PolygonOptions): void {
+    if (!this.map || !this.L) return;
+
+    const L = this.L;
+    const latlngs = options.coordinates.map((coord) => L.latLng(coord[0], coord[1]));
+    const polygon = L.polygon(latlngs, {
+      color: options.color ?? '#3388ff',
+      fillColor: options.fillColor ?? '#3388ff',
+      fillOpacity: options.fillOpacity ?? 0.2,
+      weight: options.weight ?? 2,
+    });
+
+    polygon.addTo(this.map);
+    layerInstances.set(id, polygon);
+  }
+
+  addGeoJSON(id: string, options: GeoJSONOptions): void {
+    if (!this.map || !this.L) return;
+
+    const L = this.L;
+    const layer = L.geoJSON(options.data as GeoJSON.FeatureCollection, {
+      style: options.style
+        ? () => ({
+            color: options.style!.color ?? '#3388ff',
+            fillColor: options.style!.fillColor ?? '#3388ff',
+            fillOpacity: options.style!.fillOpacity ?? 0.2,
+            weight: options.style!.weight ?? 2,
+            opacity: options.style!.opacity ?? 1,
+          })
+        : undefined,
+    });
+
+    layer.addTo(this.map);
+    layerInstances.set(id, layer);
+  }
+
+  removeLayer(id: string): void {
+    const layer = layerInstances.get(id);
+    if (layer && this.map) {
+      this.map.removeLayer(layer);
+      layerInstances.delete(id);
     }
   }
 
-  on(event: MapEvent | string, handler: EventHandler): void {
+  setView(center: LatLng, zoom?: number): void {
+    if (this.map) {
+      this.map.setView([center[0], center[1]], zoom ?? this.map.getZoom());
+    }
+  }
+
+  fitBounds(bounds: BoundsTuple): void {
+    if (this.map && this.L) {
+      const L = this.L;
+      const latLngBounds = L.latLngBounds(
+        L.latLng(bounds[0][0], bounds[0][1]),
+        L.latLng(bounds[1][0], bounds[1][1]),
+      );
+      this.map.fitBounds(latLngBounds);
+    }
+  }
+
+  on(event: string, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
     }
     this.eventHandlers.get(event)!.add(handler);
   }
 
-  off(event: MapEvent | string, handler: EventHandler): void {
+  off(event: string, handler: EventHandler): void {
     this.eventHandlers.get(event)?.delete(handler);
   }
 
-  onLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void {
-    this.layers.get(layerId)?.clickHandlers.add(handler);
-  }
-
-  offLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void {
-    this.layers.get(layerId)?.clickHandlers.delete(handler);
+  private emit(event: string, data?: unknown): void {
+    const handlers = this.eventHandlers.get(event);
+    if (handlers) {
+      const payload: EventPayload = {
+        type: event,
+        timestamp: Date.now(),
+        data,
+      };
+      handlers.forEach((handler) => handler(payload));
+    }
   }
 
   destroy(): void {
-    this.layers.clear();
-    this.eventHandlers.clear();
+    layerInstances.forEach((layer) => {
+      if (this.map) {
+        this.map.removeLayer(layer);
+      }
+    });
+    layerInstances.clear();
+
     if (this.map) {
       this.map.remove();
       this.map = null;
     }
-    this.tileLayer = null;
+
+    this.eventHandlers.clear();
   }
-
-  /**
-   * Truy cập map instance native (cho advanced use-cases)
-   */
-  getNativeMap(): L.Map | null {
-    return this.map;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
-
-  private assertMap(): void {
-    if (!this.map) {
-      throw new Error('[LeafletRenderer] Map chưa được khởi tạo. Gọi initialize() trước.');
-    }
-  }
-
-  private dispatch(
-    event: string,
-    payload: { target: unknown; lngLat?: LngLat; feature?: VNGeoJSONFeature; layerId?: string },
-  ): void {
-    this.eventHandlers.get(event)?.forEach((handler) => {
-      try {
-        handler({ type: event as MapEvent, ...payload });
-      } catch (err) {
-        console.error(`[LeafletRenderer] Error in "${event}" handler:`, err);
-      }
-    });
-  }
-
-  private toLeafletPathStyle(
-    baseStyle: LayerStyle,
-    options: LayerOptions,
-    feature?: VNGeoJSONFeature,
-  ): L.PathOptions {
-    let style = baseStyle;
-    if (options.styleFunction && feature) {
-      const dynamic = options.styleFunction(feature);
-      if (dynamic) style = mergeStyle(baseStyle, dynamic);
-    }
-    return {
-      fillColor: style.fillColor,
-      fillOpacity: style.fillOpacity,
-      color: style.strokeColor,
-      weight: style.strokeWidth,
-    };
-  }
-
-  private bindFeatureInteractions(
-    layer: L.Layer,
-    feature: VNGeoJSONFeature,
-    options: LayerOptions,
-    baseStyle: LayerStyle,
-    clickHandlers: Set<(feature: VNGeoJSONFeature) => void>,
-  ): void {
-    const path = layer as L.Path;
-
-    path.on('mouseover', () => {
-      const hoverStyle: L.PathOptions = {
-        fillColor: baseStyle.hoverFillColor ?? baseStyle.fillColor,
-        color: baseStyle.hoverStrokeColor ?? baseStyle.strokeColor,
-        weight: (baseStyle.strokeWidth ?? 1) + 1,
-        fillOpacity: Math.min((baseStyle.fillOpacity ?? 0.2) + 0.15, 1),
-      };
-      path.setStyle(hoverStyle);
-      if ('bringToFront' in path) (path as unknown as { bringToFront: () => void }).bringToFront();
-    });
-
-    path.on('mouseout', () => {
-      path.setStyle(this.toLeafletPathStyle(baseStyle, options, feature));
-    });
-
-    path.on('click', (e: L.LeafletMouseEvent) => {
-      this.L.DomEvent.stopPropagation(e);
-      clickHandlers.forEach((h) => h(feature));
-      this.dispatch('click', {
-        target: layer,
-        feature,
-        lngLat: [e.latlng.lng, e.latlng.lat],
-      });
-    });
-
-    if (options.popup) {
-      const content = this.buildPopupContent(feature, options.popup);
-      if (content) path.bindPopup(content);
-    }
-
-    if (options.tooltip) {
-      const tip =
-        typeof options.tooltip === 'string'
-          ? options.tooltip
-          : (feature.properties?.name ?? feature.properties?.fullName ?? '');
-      if (tip) path.bindTooltip(tip, { sticky: true });
-    }
-  }
-
-  private buildPopupContent(feature: VNGeoJSONFeature, popup: boolean | PopupOptions): string {
-    if (typeof popup === 'object' && popup.contentTemplate) {
-      return popup.contentTemplate(feature);
-    }
-    const props = feature.properties;
-    if (!props) return '';
-    const name = props.fullName ?? props.full_name ?? props.name ?? props.code ?? '';
-    const parts: string[] = [`<strong>${escapeHtml(String(name))}</strong>`];
-    if (props.code) parts.push(`<div>Mã: ${escapeHtml(String(props.code))}</div>`);
-    if (props.area_km2)
-      parts.push(`<div>Diện tích: ${escapeHtml(String(props.area_km2))} km²</div>`);
-    return `<div class="vn-gis-popup">${parts.join('')}</div>`;
-  }
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

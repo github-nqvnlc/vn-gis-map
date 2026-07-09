@@ -1,64 +1,54 @@
 /**
- * @vn-gis/map - Thư viện hiển thị bản đồ GIS Việt Nam
+ * @vn-gis/map - Vietnam GIS Map Library
  *
- * Entry point chính. Export core API (VNGisMap), types, utils và các helper.
+ * Entry point chính. Export VNGisMap class, types, và utilities.
  * Renderer cụ thể (Leaflet/MapLibre) được import qua sub-path:
  *   - `@vn-gis/map/leaflet`
  *   - `@vn-gis/map/maplibre`
  */
 
-// Core
+// Core classes
 export { VNGisMap } from './core/VNGisMap';
-export type { RendererFactory } from './core/VNGisMap';
-export { ApiClient, ApiClientError } from './core/ApiClient';
-export type { ApiClientConfig, ResponseFormat } from './core/ApiClient';
 export { EventEmitter } from './core/EventEmitter';
-export { LayerManager } from './core/LayerManager';
 
-// Renderer interface (adapter base)
-export type { IRenderer, MapInitOptions } from './renderers/base/IRenderer';
+// Renderer interface
+export type { IRenderer, RendererFactory } from './types';
 
 // Types
 export type {
-  VNGeoJSONFeature,
-  VNGeoJSONFeatureProperties,
-  VNGeoJSONCollection,
-  LookupResult,
-  ApiEnvelope,
-  ApiError,
-  ValidateResult,
-  AuthUser,
-} from './types/api.types';
-export type {
-  LngLat,
-  Bounds,
-  LayerStyle,
+  // Core types
+  RendererType,
+  LatLng,
+  BoundsTuple,
+  // Map configuration
+  MapConfig,
+  MapOptions,
+  // Layer types
+  LayerType,
   LayerOptions,
-  StyleFunction,
-  PopupOptions,
-  VNMapConfig,
-  InitialLayers,
-  CustomLayerSource,
-  RegisteredLayer,
+  MarkerOptions,
+  LeafletIconOptions,
+  MapLibreIconOptions,
+  PolygonOptions,
+  GeoJSONOptions,
+  GeoJSONStyle,
+  // Layer storage
+  LayerInstance,
+  LayerEntry,
+  // Events
   MapEvent,
   MapEventPayload,
   EventHandler,
-} from './types/config.types';
-export { isFeatureCollection, isFeature } from './types/geojson.types';
+} from './types';
 
 // Utils & constants
 export {
   VN_BOUNDS,
+  VN_CENTER,
   VN_DEFAULT_ZOOM,
-  VN_CENTER_LATLNG,
-  VN_CENTER_LNGLAT,
-  VN_MAP_ZOOM,
+  VN_MIN_ZOOM,
+  VN_MAX_ZOOM,
+  VN_CITY_ZOOM,
+  VN_DISTRICT_ZOOM,
+  VN_STREET_ZOOM,
 } from './utils/bounds';
-export { Cache } from './utils/cache';
-export {
-  DEFAULT_PROVINCE_STYLE,
-  DEFAULT_WARD_STYLE,
-  DEFAULT_CUSTOM_STYLE,
-  VN_STYLE_PRESETS,
-  mergeStyle,
-} from './utils/style';

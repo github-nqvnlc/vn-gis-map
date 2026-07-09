@@ -1,37 +1,48 @@
-import type { MapEvent, MapEventPayload, EventHandler } from '../types';
-
 /**
  * Minimal typed event emitter
  */
+
+type EventHandler = (payload: EventPayload) => void;
+
+interface EventPayload {
+  type: string;
+  timestamp: number;
+  data?: unknown;
+}
+
 export class EventEmitter {
   private listeners = new Map<string, Set<EventHandler>>();
 
-  on<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
+  on(event: string, handler: EventHandler): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(handler as EventHandler);
+    this.listeners.get(event)!.add(handler);
     return this;
   }
 
-  off<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
-    this.listeners.get(event)?.delete(handler as EventHandler);
+  off(event: string, handler: EventHandler): this {
+    this.listeners.get(event)?.delete(handler);
     return this;
   }
 
-  once<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
-    const wrapper: EventHandler<T> = (payload) => {
+  once(event: string, handler: EventHandler): this {
+    const wrapper: EventHandler = (payload) => {
       handler(payload);
       this.off(event, wrapper);
     };
     return this.on(event, wrapper);
   }
 
-  emit<T = unknown>(event: MapEvent | string, payload: Omit<MapEventPayload<T>, 'type'>): void {
-    const fullPayload: MapEventPayload<T> = { ...payload, type: event as MapEvent };
+  emit(event: string, data?: unknown): void {
+    const payload: EventPayload = {
+      type: event,
+      timestamp: Date.now(),
+      data,
+    };
     this.listeners.get(event)?.forEach((handler) => {
       try {
-        (handler as EventHandler<T>)(fullPayload);
+        handler(payload);
       } catch (err) {
         console.error(`[VNGisMap] Error in event handler for "${event}":`, err);
       }

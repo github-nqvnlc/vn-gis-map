@@ -29,7 +29,7 @@
         overflow: hidden;
       }
       #sidebar {
-        width: 300px;
+        width: 320px;
         padding: 20px;
         background: #f7f8fa;
         border-right: 1px solid #e2e6ea;
@@ -37,7 +37,7 @@
       }
       #sidebar h1 {
         font-size: 18px;
-        margin: 0 0 16px;
+        margin: 0 0 20px;
         color: #237804;
       }
       #map {
@@ -45,14 +45,14 @@
         height: 100vh;
       }
       .control-group {
-        margin-bottom: 16px;
+        margin-bottom: 20px;
       }
       .control-group label {
         display: block;
         font-size: 12px;
         font-weight: 600;
         color: #555;
-        margin-bottom: 6px;
+        margin-bottom: 8px;
         text-transform: uppercase;
         letter-spacing: 0.03em;
       }
@@ -78,7 +78,13 @@
       button.secondary:hover {
         background: #cfd4da;
       }
-      select {
+      button.danger {
+        background: #dc3545;
+      }
+      button.danger:hover {
+        background: #c82333;
+      }
+      input, select {
         width: 100%;
         padding: 8px;
         border: 1px solid #cfd4da;
@@ -96,33 +102,63 @@
         padding: 12px;
         min-height: 60px;
       }
+      .code-block {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 12px;
+        border-radius: 6px;
+        font-family: 'Fira Code', monospace;
+        font-size: 12px;
+        overflow-x: auto;
+        margin-top: 12px;
+      }
     </style>
   </head>
   <body>
     <div id="sidebar">
-      <h1>VN GIS Map · MapLibre</h1>
+      <h1>VN GIS Map - MapLibre</h1>
 
       <div class="control-group">
-        <label>Tỉnh / Thành</label>
-        <button id="btn-provinces">Hiện tỉnh/thành</button>
-        <button id="btn-hide-provinces" class="secondary">Ẩn</button>
+        <label>Map Configuration</label>
+        <button id="btn-default">Vietnam Center</button>
+        <button id="btn-hanoi" class="secondary">Hanoi</button>
+        <button id="btn-hcmc" class="secondary">Ho Chi Minh City</button>
       </div>
 
       <div class="control-group">
-        <label>Xã / Phường theo tỉnh</label>
-        <select id="province-select">
-          <option value="01">Hà Nội (01)</option>
-          <option value="79">TP. Hồ Chí Minh (79)</option>
-          <option value="48">Đà Nẵng (48)</option>
-          <option value="31">Hải Phòng (31)</option>
-          <option value="92">Cần Thơ (92)</option>
-        </select>
-        <button id="btn-wards">Hiện xã/phường</button>
+        <label>Zoom Controls</label>
+        <button id="btn-zoom-in">Zoom In (+)</button>
+        <button id="btn-zoom-out">Zoom Out (-)</button>
       </div>
 
       <div class="control-group">
-        <label>Reverse geocode (click lên bản đồ)</label>
-        <div id="info">Chưa có dữ liệu. Hãy click lên bản đồ.</div>
+        <label>Add Marker</label>
+        <input type="text" id="marker-title" placeholder="Marker title" value="Hanoi, Vietnam" />
+        <input type="number" id="marker-lat" placeholder="Latitude" value="21.0285" step="0.0001" />
+        <input type="number" id="marker-lng" placeholder="Longitude" value="105.8542" step="0.0001" />
+        <button id="btn-add-marker">Add Marker</button>
+      </div>
+
+      <div class="control-group">
+        <label>Add Polygon</label>
+        <input type="text" id="polygon-name" placeholder="Polygon name" value="Demo Polygon" />
+        <button id="btn-add-polygon">Add Triangle Polygon</button>
+      </div>
+
+      <div class="control-group">
+        <label>Custom GeoJSON</label>
+        <button id="btn-add-geojson">Add Vietnam Boundary</button>
+      </div>
+
+      <div class="control-group">
+        <label>Layer Management</label>
+        <button id="btn-remove-last" class="danger">Remove Last Layer</button>
+        <button id="btn-clear-all" class="danger">Clear All Layers</button>
+      </div>
+
+      <div class="control-group">
+        <label>Event Log</label>
+        <div id="info">Click on the map or interact with controls to see events.</div>
       </div>
     </div>
 
@@ -131,60 +167,180 @@
     <!-- MapLibre JS (peer dependency) -->
     <script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js" crossorigin=""></script>
 
+    <!-- VNGisMap Library -->
     <script type="module">
-      import { VNGisMap } from '../dist/index.esm.js';
-      import { MapLibreRenderer } from '../dist/renderers/maplibre.esm.js';
-
-      const API_BASE_URL = 'http://localhost:4000';
-      const API_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYWRtaW5Adm4uZ292LnZuIiwicm9sZSI6IkFETUlOIiwiaWF0IjoxNzgzMzIzMDEwLCJleHAiOjE3ODM5Mjc4MTB9.rJfu2ox53AkRKZ_37a0-P3SHx387C9W17HpqDnyvKPg';
+      import { VNGisMap, VN_CENTER, VN_BOUNDS } from '../dist/index.esm.js';
 
       const infoEl = document.getElementById('info');
+      const layers = [];
 
-      const map = new VNGisMap(
-        {
-          container: 'map',
-          renderer: 'maplibre',
-          apiBaseUrl: API_BASE_URL,
-          token: API_TOKEN,
-          layers: { provinces: true },
-          onProvinceClick: (feature) => {
-            const p = feature.properties;
-            infoEl.innerHTML = `<strong>${p.name ?? p.code}</strong><br/>Mã tỉnh: ${p.code}`;
-          },
-          onWardClick: (feature) => {
-            const p = feature.properties;
-            infoEl.innerHTML = `<strong>${p.name ?? p.code}</strong><br/>Mã xã: ${p.code}`;
-          },
-        },
-        () => new MapLibreRenderer(window.maplibregl),
-      );
-
-      map.on('click', async (payload) => {
-        if (!payload.lngLat) return;
-        const [lng, lat] = payload.lngLat;
-        infoEl.textContent = 'Đang tra cứu...';
-        try {
-          const result = await map.reverseGeocode(lng, lat);
-          if (result.found && result.ward) {
-            infoEl.innerHTML = `
-              <strong>${result.ward.ward_full_name}</strong><br/>
-              ${result.ward.province_full_name}<br/>
-              <small>${lng.toFixed(5)}, ${lat.toFixed(5)}</small>
-            `;
-          } else {
-            infoEl.innerHTML = `Không tìm thấy khu vực tại <small>${lng.toFixed(5)}, ${lat.toFixed(5)}</small>`;
-          }
-        } catch (err) {
-          infoEl.textContent = 'Lỗi tra cứu: ' + err.message;
-        }
+      // Create map instance
+      const map = new VNGisMap({
+        container: 'map',
+        renderer: 'maplibre',
+        center: VN_CENTER,
+        zoom: 6,
+        maxZoom: 18,
+        minZoom: 5,
+        bounds: VN_BOUNDS,
+        scrollWheelZoom: true,
       });
 
-      document.getElementById('btn-provinces').onclick = () => map.showProvinces();
-      document.getElementById('btn-hide-provinces').onclick = () => map.hideProvinces();
-      document.getElementById('btn-wards').onclick = () => {
-        const code = document.getElementById('province-select').value;
-        map.showWards(code);
+      // Event: Map ready
+      map.on('ready', () => {
+        logEvent('Map ready!');
+      });
+
+      // Event: Click
+      map.on('click', (payload) => {
+        logEvent(`Click at: ${payload.data?.lat?.toFixed(4)}, ${payload.data?.lng?.toFixed(4)}`);
+      });
+
+      // Event: Layer add
+      map.on('layeradd', (payload) => {
+        logEvent(`Layer added: ${payload.data?.id} (${payload.data?.type})`);
+      });
+
+      // Event: Layer remove
+      map.on('layerremove', (payload) => {
+        logEvent(`Layer removed: ${payload.data?.id}`);
+      });
+
+      // Map Configuration Controls
+      document.getElementById('btn-default').onclick = () => {
+        map.setView(VN_CENTER, 6);
+        logEvent('View set to Vietnam center');
       };
+
+      document.getElementById('btn-hanoi').onclick = () => {
+        map.setView([21.0285, 105.8542], 12);
+        logEvent('View set to Hanoi');
+      };
+
+      document.getElementById('btn-hcmc').onclick = () => {
+        map.setView([10.8231, 106.6297], 12);
+        logEvent('View set to Ho Chi Minh City');
+      };
+
+      // Zoom Controls
+      document.getElementById('btn-zoom-in').onclick = () => {
+        const options = map.getOptions();
+        map.setView(options.center, Math.min(options.zoom + 1, options.maxZoom));
+        logEvent('Zoom in');
+      };
+
+      document.getElementById('btn-zoom-out').onclick = () => {
+        const options = map.getOptions();
+        map.setView(options.center, Math.max(options.zoom - 1, options.minZoom));
+        logEvent('Zoom out');
+      };
+
+      // Add Marker
+      document.getElementById('btn-add-marker').onclick = () => {
+        const title = document.getElementById('marker-title').value;
+        const lat = parseFloat(document.getElementById('marker-lat').value);
+        const lng = parseFloat(document.getElementById('marker-lng').value);
+
+        const id = `marker-${Date.now()}`;
+        map.addLayer(id, 'marker', {
+          lat,
+          lng,
+          title,
+          popup: `<strong>${title}</strong><br/>Lat: ${lat}<br/>Lng: ${lng}`,
+        });
+        layers.push(id);
+        logEvent(`Added marker at ${lat}, ${lng}`);
+      };
+
+      // Add Polygon
+      document.getElementById('btn-add-polygon').onclick = () => {
+        const name = document.getElementById('polygon-name').value;
+        const id = `polygon-${Date.now()}`;
+
+        // Triangle around a point
+        const baseLat = 21.0285;
+        const baseLng = 105.8542;
+        const size = 0.1;
+
+        map.addLayer(id, 'polygon', {
+          coordinates: [
+            [baseLat, baseLng],
+            [baseLat + size, baseLng],
+            [baseLat + size / 2, baseLng + size],
+          ],
+          color: '#ff5722',
+          fillColor: '#ff5722',
+          fillOpacity: 0.3,
+          weight: 2,
+        });
+        layers.push(id);
+        logEvent(`Added polygon: ${name}`);
+      };
+
+      // Add GeoJSON
+      document.getElementById('btn-add-geojson').onclick = () => {
+        const id = `geojson-${Date.now()}`;
+
+        // Simple Vietnam-like polygon for demo
+        const geojsonData = {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [102.14, 8.18],
+                    [109.47, 8.18],
+                    [109.47, 23.24],
+                    [102.14, 23.24],
+                    [102.14, 8.18],
+                  ],
+                ],
+              },
+              properties: { name: 'Vietnam Demo Boundary' },
+            },
+          ],
+        };
+
+        map.addLayer(id, 'geojson', {
+          data: geojsonData,
+          style: {
+            color: '#52c41a',
+            fillColor: '#52c41a',
+            fillOpacity: 0.1,
+            weight: 2,
+          },
+        });
+        layers.push(id);
+        logEvent('Added GeoJSON boundary');
+      };
+
+      // Remove Last Layer
+      document.getElementById('btn-remove-last').onclick = () => {
+        if (layers.length > 0) {
+          const lastLayer = layers.pop();
+          map.removeLayer(lastLayer);
+          logEvent(`Removed layer: ${lastLayer}`);
+        } else {
+          logEvent('No layers to remove');
+        }
+      };
+
+      // Clear All Layers
+      document.getElementById('btn-clear-all').onclick = () => {
+        layers.forEach((layerId) => map.removeLayer(layerId));
+        layers.length = 0;
+        logEvent('Cleared all layers');
+      };
+
+      // Utility: Log event
+      function logEvent(message) {
+        const time = new Date().toLocaleTimeString();
+        infoEl.innerHTML = `<strong>[${time}]</strong> ${message}`;
+        console.log(`[VNGisMap] ${message}`);
+      }
     </script>
   </body>
 </html>

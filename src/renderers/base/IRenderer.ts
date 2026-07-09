@@ -1,96 +1,48 @@
-import type { VNGeoJSONCollection, VNGeoJSONFeature } from '../../types/api.types';
-import type {
-  LayerOptions,
-  LayerStyle,
-  LngLat,
-  Bounds,
-  MapEvent,
-  EventHandler,
-} from '../../types/config.types';
-
 /**
- * Options khởi tạo map instance
+ * Renderer interface for map libraries
  */
-export interface MapInitOptions {
-  center: LngLat;
-  zoom: number;
-  minZoom?: number;
-  maxZoom?: number;
-  /** Base tile URL template */
-  tileUrl?: string;
-  attribution?: string;
-}
+
+import type {
+  MapOptions,
+  LatLng,
+  BoundsTuple,
+  MarkerOptions,
+  PolygonOptions,
+  GeoJSONOptions,
+  EventHandler,
+} from '../../types';
 
 /**
- * Interface chung cho tất cả renderer adapters
- * Mỗi renderer (Leaflet, MapLibre, ...) phải implement interface này
+ * Interface for map renderer implementations
  */
 export interface IRenderer {
-  /**
-   * Khởi tạo bản đồ vào container element
-   */
-  initialize(container: HTMLElement, options: MapInitOptions): void;
+  /** Initialize the map with container and options */
+  initialize(container: HTMLElement, options: MapOptions): void;
 
-  /**
-   * Set view (center + zoom)
-   * @param center - [lng, lat]
-   */
-  setView(center: LngLat, zoom: number): void;
+  /** Add a marker layer */
+  addMarker(id: string, options: MarkerOptions): void;
 
-  /**
-   * Fit bounds
-   * @param bounds - [[south, west], [north, east]]
-   */
-  fitBounds(bounds: Bounds): void;
+  /** Add a polygon layer */
+  addPolygon(id: string, options: PolygonOptions): void;
 
-  /**
-   * Thêm GeoJSON layer vào map
-   * @returns layerId dùng để reference về sau
-   */
-  addGeoJSON(geojson: VNGeoJSONCollection, options: LayerOptions, layerId?: string): string;
+  /** Add a GeoJSON layer */
+  addGeoJSON(id: string, options: GeoJSONOptions): void;
 
-  /**
-   * Xóa layer khỏi map
-   */
-  removeLayer(layerId: string): void;
+  /** Remove a layer by ID */
+  removeLayer(id: string): void;
 
-  /**
-   * Cập nhật style cho layer
-   */
-  setLayerStyle(layerId: string, style: LayerStyle): void;
+  /** Set the map view */
+  setView(center: LatLng, zoom?: number): void;
 
-  /**
-   * Ẩn/hiện layer
-   */
-  setLayerVisibility(layerId: string, visible: boolean): void;
+  /** Fit the map to bounds */
+  fitBounds(bounds: BoundsTuple): void;
 
-  /**
-   * Đăng ký event handler cho map events
-   */
-  on(event: MapEvent | string, handler: EventHandler): void;
+  /** Subscribe to map events */
+  on(event: string, handler: EventHandler): void;
 
-  /**
-   * Hủy đăng ký event handler
-   */
-  off(event: MapEvent | string, handler: EventHandler): void;
+  /** Unsubscribe from map events */
+  off(event: string, handler: EventHandler): void;
 
-  /**
-   * Đăng ký click handler cho 1 layer
-   */
-  onLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void;
-
-  /**
-   * Hủy đăng ký click handler cho 1 layer
-   */
-  offLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void;
-
-  /**
-   * Destroy bản đồ và giải phóng resources
-   */
+  /** Clean up resources */
   destroy(): void;
-
-  /**
-   * True nếu map đã được khởi tạo
-   */
-  readonly isInitialized: boolean;
 }

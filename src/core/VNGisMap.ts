@@ -1,400 +1,247 @@
+/**
+ * VNGisMap - Main facade class
+ */
+
 import type {
-  VNMapConfig,
-  LngLat,
-  Bounds,
+  MapConfig,
+  MapOptions,
+  LatLng,
+  BoundsTuple,
+  LayerType,
   LayerOptions,
-  LayerStyle,
-  MapEvent,
-  EventHandler,
-  InitialLayers,
-} from '../types/config.types';
-import type { VNGeoJSONFeature, VNGeoJSONCollection, LookupResult } from '../types/api.types';
-import type { IRenderer } from '../renderers/base/IRenderer';
-import { ApiClient } from './ApiClient';
+  MarkerOptions,
+  PolygonOptions,
+  GeoJSONOptions,
+} from '../types';
+import { VN_CENTER, VN_DEFAULT_ZOOM, VN_MIN_ZOOM, VN_MAX_ZOOM } from '../utils/bounds';
 import { EventEmitter } from './EventEmitter';
-import { LayerManager } from './LayerManager';
-import { VN_CENTER_LNGLAT, VN_DEFAULT_ZOOM, VN_MAP_ZOOM } from '../utils/bounds';
-import {
-  DEFAULT_PROVINCE_STYLE,
-  DEFAULT_WARD_STYLE,
-  DEFAULT_CUSTOM_STYLE,
-  mergeStyle,
-} from '../utils/style';
+import { LeafletRenderer } from '../renderers/leaflet/LeafletRenderer';
+import { MapLibreRenderer } from '../renderers/maplibre/MapLibreRenderer';
+import type { IRenderer } from '../types';
+
+/** Map instance storage */
+const instances = new Map<string, VNGisMap>();
+let instanceCounter = 0;
 
 /**
- * Factory tạo renderer. Cho phép người dùng inject renderer tuỳ chọn.
- */
-export type RendererFactory = (config: VNMapConfig) => IRenderer;
-
-/**
- * Layer id cố định cho provinces layer.
- */
-const PROVINCES_LAYER_ID = 'vn-provinces';
-
-/**
- * Prefix cho wards layer id (mỗi tỉnh 1 layer riêng).
- */
-const WARDS_LAYER_PREFIX = 'vn-wards';
-
-/**
- * VNGisMap - Điểm truy cập chính của thư viện.
+ * Vietnam GIS Map Library
  *
- * Kết hợp renderer (Leaflet/MapLibre), ApiClient (vn-gis-api) và LayerManager
- * để cung cấp API cấp cao: hiển thị tỉnh/thành, xã/phường, custom GeoJSON,
- * reverse geocoding, và quản lý sự kiện.
- *
- * @example
- * ```ts
- * import { VNGisMap } from '@vn-gis/map';
- * import { LeafletRenderer } from '@vn-gis/map/leaflet';
- * import * as L from 'leaflet';
- *
- * const map = new VNGisMap(
- *   {
- *     container: 'map',
- *     renderer: 'leaflet',
- *     apiBaseUrl: 'https://api.example.com',
- *     token: 'xxx',
- *     layers: { provinces: true },
- *   },
- *   () => new LeafletRenderer(L),
- * );
- * ```
+ * A lightweight library for rendering maps of Vietnam with support for
+ * Leaflet and MapLibre GL JS renderers.
  */
-export class VNGisMap {
-  private readonly config: VNMapConfig;
-  private readonly renderer: IRenderer;
-  private readonly api: ApiClient;
-  private readonly layerManager: LayerManager;
-  private readonly emitter = new EventEmitter();
-  private ready = false;
+export class VNGisMap extends EventEmitter {
+  /** Unique instance ID */
+  public readonly id: string;
+
+  /** The container element */
+  private container: HTMLElement | null = null;
+
+  /** Renderer instance */
+  private renderer: IRenderer | null = null;
+
+  /** Resolved map options */
+  private options: MapOptions | null = null;
 
   /**
-   * @param config - Cấu hình khởi tạo.
-   * @param rendererFactory - Factory tạo renderer instance. Bắt buộc vì renderer
-   *   là peer dependency (Leaflet/MapLibre) và được inject để tránh bundle cứng.
+   * Create a new VNGisMap instance
    */
-  constructor(config: VNMapConfig, rendererFactory: RendererFactory) {
-    this.config = config;
-    this.renderer = rendererFactory(config);
-    this.api = new ApiClient({
-      baseUrl: config.apiBaseUrl,
-      token: config.token,
-      username: config.username,
-      password: config.password,
-      cacheTtl: config.cacheTtl,
-    });
-    this.layerManager = new LayerManager(this.renderer);
+  constructor(config: MapConfig) {
+    super();
 
-    this.init();
-  }
+    this.id = `vngismap-${++instanceCounter}`;
 
-  /**
-   * True khi map đã sẵn sàng (đã render xong lần đầu).
-   */
-  get isReady(): boolean {
-    return this.ready;
-  }
+    // Resolve container
+    if (typeof config.container === 'string') {
+      const el = document.getElementById(config.container);
+      if (!el) {
+        throw new Error(`[VNGisMap] Container element not found: ${config.container}`);
+      }
+      this.container = el;
+    } else {
+      this.container = config.container;
+    }
 
-  /**
-   * Truy cập renderer bên dưới (advanced use-cases).
-   */
-  getRenderer(): IRenderer {
-    return this.renderer;
-  }
-
-  /**
-   * Truy cập ApiClient (advanced use-cases).
-   */
-  getApiClient(): ApiClient {
-    return this.api;
-  }
-
-  /**
-   * Truy cập LayerManager.
-   */
-  getLayerManager(): LayerManager {
-    return this.layerManager;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Layers cấp cao
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Hiển thị toàn bộ tỉnh/thành Việt Nam.
-   *
-   * @param options - Tuỳ chọn style/tương tác. Style mặc định là {@link DEFAULT_PROVINCE_STYLE}.
-   * @returns Layer id để tham chiếu về sau.
-   */
-  async showProvinces(options: LayerOptions = {}): Promise<string> {
-    const geojson = await this.api.getProvinces();
-    const merged: LayerOptions = {
-      ...options,
-      style: mergeStyle(DEFAULT_PROVINCE_STYLE, options.style),
+    // Resolve options with defaults
+    this.options = {
+      container: this.container,
+      renderer: config.renderer ?? 'leaflet',
+      center: config.center ?? VN_CENTER,
+      zoom: config.zoom ?? VN_DEFAULT_ZOOM,
+      maxZoom: config.maxZoom ?? VN_MAX_ZOOM,
+      minZoom: config.minZoom ?? VN_MIN_ZOOM,
+      bounds: config.bounds,
+      scrollWheelZoom: config.scrollWheelZoom ?? true,
     };
-    this.layerManager.add(PROVINCES_LAYER_ID, 'provinces', geojson, merged);
-    this.wireLayerClick(PROVINCES_LAYER_ID, (feature) => {
-      this.config.onProvinceClick?.(feature);
-    });
-    return PROVINCES_LAYER_ID;
+
+    // Initialize renderer
+    this.initializeRenderer();
   }
 
   /**
-   * Ẩn layer tỉnh/thành.
+   * Initialize the appropriate renderer
    */
-  hideProvinces(): void {
-    this.layerManager.remove(PROVINCES_LAYER_ID);
+  private initializeRenderer(): void {
+    if (!this.container || !this.options) return;
+
+    // Create renderer based on type
+    if (this.options.renderer === 'maplibre') {
+      this.renderer = new MapLibreRenderer();
+    } else {
+      this.renderer = new LeafletRenderer();
+    }
+
+    // Set up event forwarding from renderer
+    this.setupRendererEvents();
+
+    // Initialize the renderer
+    this.renderer.initialize(this.container, this.options);
   }
 
   /**
-   * Hiển thị xã/phường của 1 tỉnh.
+   * Set up event forwarding from renderer to facade
+   */
+  private setupRendererEvents(): void {
+    if (!this.renderer) return;
+
+    const events = [
+      'click',
+      'dblclick',
+      'mousedown',
+      'mouseup',
+      'mouseover',
+      'mouseout',
+      'mousemove',
+      'contextmenu',
+      'zoomstart',
+      'zoomend',
+      'zoomlevelschange',
+      'movestart',
+      'move',
+      'moveend',
+      'dragstart',
+      'drag',
+      'dragend',
+      'resize',
+      'layeradd',
+      'layerremove',
+      'ready',
+      'error',
+    ];
+
+    events.forEach((eventName) => {
+      this.renderer!.on(eventName, (payload) => {
+        // Forward to EventEmitter
+        this.emit(eventName, payload.data);
+        // Emit as global event
+        this.emit('*', { type: eventName, data: payload.data });
+      });
+    });
+  }
+
+  /**
+   * Add a layer to the map
    *
-   * @param provinceCode - Mã tỉnh (vd: "01" cho Hà Nội).
-   * @param options - Tuỳ chọn style/tương tác. Mặc định {@link DEFAULT_WARD_STYLE}.
-   * @returns Layer id.
+   * @param id - Unique layer identifier
+   * @param type - Layer type: 'marker', 'polygon', or 'geojson'
+   * @param options - Layer configuration options
    */
-  async showWards(provinceCode: string, options: LayerOptions = {}): Promise<string> {
-    const geojson = await this.api.getWards(provinceCode);
-    const layerId = `${WARDS_LAYER_PREFIX}-${provinceCode}`;
-    const merged: LayerOptions = {
-      ...options,
-      style: mergeStyle(DEFAULT_WARD_STYLE, options.style),
-    };
-    this.layerManager.add(layerId, 'wards', geojson, merged, { provinceCode });
-    this.wireLayerClick(layerId, (feature) => {
-      this.config.onWardClick?.(feature);
-    });
-    return layerId;
+  addLayer(id: string, type: LayerType, options: LayerOptions): void {
+    if (!this.renderer) {
+      throw new Error('[VNGisMap] Map not initialized');
+    }
+
+    switch (type) {
+      case 'marker':
+        this.renderer.addMarker(id, options as MarkerOptions);
+        break;
+      case 'polygon':
+        this.renderer.addPolygon(id, options as PolygonOptions);
+        break;
+      case 'geojson':
+        this.renderer.addGeoJSON(id, options as GeoJSONOptions);
+        break;
+      default:
+        throw new Error(`[VNGisMap] Unknown layer type: ${type}`);
+    }
+
+    this.emit('layeradd', { id, type, options });
   }
 
   /**
-   * Ẩn layer xã/phường của 1 tỉnh.
-   */
-  hideWards(provinceCode: string): void {
-    this.layerManager.remove(`${WARDS_LAYER_PREFIX}-${provinceCode}`);
-  }
-
-  /**
-   * Thêm custom GeoJSON layer từ URL hoặc inline data.
+   * Remove a layer from the map
    *
-   * @param source - URL trả về GeoJSON, hoặc object GeoJSON inline.
-   * @param options - Tuỳ chọn style/tương tác. Mặc định {@link DEFAULT_CUSTOM_STYLE}.
-   * @param layerId - Id tuỳ chọn. Nếu không truyền sẽ tự sinh.
-   * @returns Layer id.
+   * @param id - Layer identifier to remove
    */
-  async addCustomLayer(
-    source: string | VNGeoJSONCollection,
-    options: LayerOptions = {},
-    layerId?: string,
-  ): Promise<string> {
-    const geojson = typeof source === 'string' ? await this.api.fetchGeoJSON(source) : source;
-    const id = layerId ?? `vn-custom-${Date.now()}`;
-    const merged: LayerOptions = {
-      ...options,
-      style: mergeStyle(DEFAULT_CUSTOM_STYLE, options.style),
-    };
-    this.layerManager.add(id, 'custom', geojson, merged, {
-      source: typeof source === 'string' ? source : undefined,
-    });
-    this.wireLayerClick(id, (feature) => {
-      this.config.onCustomLayerClick?.(feature, id);
-    });
-    return id;
+  removeLayer(id: string): void {
+    if (!this.renderer) {
+      throw new Error('[VNGisMap] Map not initialized');
+    }
+
+    this.renderer.removeLayer(id);
+    this.emit('layerremove', { id });
   }
 
   /**
-   * Xoá 1 layer bất kỳ theo id.
-   */
-  removeLayer(layerId: string): boolean {
-    return this.layerManager.remove(layerId);
-  }
-
-  /**
-   * Cập nhật style cho 1 layer.
-   */
-  setLayerStyle(layerId: string, style: LayerStyle): boolean {
-    return this.layerManager.setStyle(layerId, style);
-  }
-
-  /**
-   * Ẩn/hiện 1 layer.
-   */
-  setLayerVisibility(layerId: string, visible: boolean): boolean {
-    return this.layerManager.setVisibility(layerId, visible);
-  }
-
-  /**
-   * Bật/tắt hiển thị 1 layer.
-   */
-  toggleLayer(layerId: string): boolean {
-    return this.layerManager.toggle(layerId);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Geocoding & navigation
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Reverse geocoding - tìm xã/phường + tỉnh từ toạ độ.
+   * Set the map view to a specific center and zoom level
    *
-   * @param lng - Kinh độ.
-   * @param lat - Vĩ độ.
+   * @param center - Center coordinates as [lat, lng]
+   * @param zoom - Optional zoom level
    */
-  async reverseGeocode(lng: number, lat: number): Promise<LookupResult> {
-    return this.api.reverseGeocode(lng, lat);
-  }
+  setView(center: LatLng, zoom?: number): void {
+    if (!this.renderer) {
+      throw new Error('[VNGisMap] Map not initialized');
+    }
 
-  /**
-   * Set view (center + zoom).
-   * @param center - [lng, lat].
-   */
-  setView(center: LngLat, zoom: number = VN_MAP_ZOOM.province): void {
     this.renderer.setView(center, zoom);
   }
 
   /**
-   * Fit map vào bounds.
+   * Fit the map to display specific bounds
+   *
+   * @param bounds - Bounds as [[south, west], [north, east]]
    */
-  fitBounds(bounds: Bounds): void {
+  fitBounds(bounds: BoundsTuple): void {
+    if (!this.renderer) {
+      throw new Error('[VNGisMap] Map not initialized');
+    }
+
     this.renderer.fitBounds(bounds);
   }
 
-  // ---------------------------------------------------------------------------
-  // Events
-  // ---------------------------------------------------------------------------
-
   /**
-   * Đăng ký lắng nghe map event.
+   * Get the current map options
    */
-  on<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
-    this.emitter.on(event, handler);
-    return this;
+  getOptions(): MapOptions | null {
+    return this.options;
   }
 
   /**
-   * Huỷ đăng ký map event.
+   * Get the renderer type
    */
-  off<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
-    this.emitter.off(event, handler);
-    return this;
+  getRendererType(): string | null {
+    return this.options?.renderer ?? null;
   }
 
   /**
-   * Đăng ký lắng nghe 1 lần.
-   */
-  once<T = unknown>(event: MapEvent | string, handler: EventHandler<T>): this {
-    this.emitter.once(event, handler);
-    return this;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Giải phóng toàn bộ resources (map, layers, listeners, cache).
+   * Clean up and destroy the map instance
    */
   destroy(): void {
-    this.layerManager.clear();
-    this.renderer.destroy();
-    this.emitter.removeAllListeners();
-    this.api.clearCache();
-    this.ready = false;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
-
-  private init(): void {
-    const container = this.resolveContainer(this.config.container);
-    const initialView = this.config.initialView;
-
-    this.renderer.initialize(container, {
-      center: initialView?.center ?? VN_CENTER_LNGLAT,
-      zoom: initialView?.zoom ?? VN_DEFAULT_ZOOM,
-      minZoom: VN_MAP_ZOOM.min,
-      maxZoom: VN_MAP_ZOOM.max,
-      tileUrl: this.config.tileUrl,
-      attribution: this.config.attribution,
-    });
-
-    this.forwardRendererEvents();
-
-    this.renderer.on('ready', () => {
-      this.ready = true;
-      if (this.config.initialBounds) {
-        this.renderer.fitBounds(this.config.initialBounds);
-      }
-      if (this.config.layers) {
-        void this.loadInitialLayers(this.config.layers);
-      }
-      this.emitter.emit('ready', { target: this });
-    });
-  }
-
-  private forwardRendererEvents(): void {
-    const events: MapEvent[] = [
-      'click',
-      'mousemove',
-      'zoomstart',
-      'zoomend',
-      'movestart',
-      'moveend',
-      'load',
-      'error',
-    ];
-    for (const evt of events) {
-      this.renderer.on(evt, (payload) => {
-        this.emitter.emit(evt, {
-          target: this,
-          lngLat: payload.lngLat,
-          feature: payload.feature,
-          layerId: payload.layerId,
-          error: payload.error,
-          data: payload.data,
-        });
-      });
+    if (this.renderer) {
+      this.renderer.destroy();
+      this.renderer = null;
     }
+
+    this.container = null;
+    this.options = null;
+
+    this.removeAllListeners();
+    instances.delete(this.id);
   }
 
-  private async loadInitialLayers(layers: InitialLayers): Promise<void> {
-    try {
-      if (layers.provinces) {
-        const opts = typeof layers.provinces === 'object' ? layers.provinces : {};
-        await this.showProvinces(opts);
-      }
-      if (layers.wards) {
-        for (const w of layers.wards) {
-          await this.showWards(w.provinceCode, w.options ?? {});
-        }
-      }
-      if (layers.custom) {
-        for (const c of layers.custom) {
-          await this.addCustomLayer(c.source, c.options ?? {});
-        }
-      }
-    } catch (err) {
-      this.emitter.emit('error', {
-        target: this,
-        error: err instanceof Error ? err : new Error(String(err)),
-      });
-    }
-  }
-
-  private wireLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void {
-    this.renderer.onLayerClick(layerId, handler);
-  }
-
-  private resolveContainer(container: string | HTMLElement): HTMLElement {
-    if (typeof container === 'string') {
-      const el = document.getElementById(container) ?? document.querySelector(container);
-      if (!el) {
-        throw new Error(`[VNGisMap] Không tìm thấy container "${container}".`);
-      }
-      return el as HTMLElement;
-    }
-    return container;
+  /**
+   * Get all instances (for debugging)
+   */
+  static getInstances(): Map<string, VNGisMap> {
+    return instances;
   }
 }

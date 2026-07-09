@@ -1,383 +1,466 @@
-import type * as maplibregl from 'maplibre-gl';
-import type { VNGeoJSONCollection, VNGeoJSONFeature } from '../../types/api.types';
-import type {
-  LayerOptions,
-  LayerStyle,
-  LngLat,
-  Bounds,
-  MapEvent,
-  EventHandler,
-  PopupOptions,
-} from '../../types/config.types';
-import type { IRenderer, MapInitOptions } from '../base/IRenderer';
-import { mergeStyle } from '../../utils/style';
-
-type MapLibreModule = typeof import('maplibre-gl');
-
-interface MapLibreLayerEntry {
-  sourceId: string;
-  fillLayerId: string;
-  lineLayerId: string;
-  options: LayerOptions;
-  style: LayerStyle;
-  clickHandlers: Set<(feature: VNGeoJSONFeature) => void>;
-  interactive: boolean;
-}
-
-const DEFAULT_TILE_URL = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
-const DEFAULT_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
 /**
- * Renderer adapter dùng MapLibre GL JS.
- *
- * MapLibre phải được cung cấp: hoặc truyền vào constructor, hoặc có sẵn global `window.maplibregl`.
+ * MapLibre GL JS renderer implementation
  */
-export class MapLibreRenderer implements IRenderer {
-  private maplibre: MapLibreModule;
+
+import type {
+  MapOptions,
+  LatLng,
+  BoundsTuple,
+  MarkerOptions,
+  PolygonOptions,
+  GeoJSONOptions,
+  EventHandler,
+  EventPayload,
+} from '../../types';
+import maplibregl from 'maplibre-gl';
+
+// Map to store layer IDs and source IDs
+const layerData = new Map<string, { sourceId: string; layerId: string }>();
+const sourceIds = new Set<string>();
+
+export class MapLibreRenderer {
   private map: maplibregl.Map | null = null;
-  private layers = new Map<string, MapLibreLayerEntry>();
-  private layerCounter = 0;
   private eventHandlers = new Map<string, Set<EventHandler>>();
-  private popup: maplibregl.Popup | null = null;
-  private loaded = false;
-  private pendingOps: Array<() => void> = [];
 
-  /**
-   * @param maplibre - Module maplibre-gl. Nếu không truyền sẽ dùng global `window.maplibregl`.
-   */
-  constructor(maplibre?: MapLibreModule) {
-    const resolved =
-      maplibre ??
-      (typeof window !== 'undefined'
-        ? (window as unknown as { maplibregl?: MapLibreModule }).maplibregl
-        : undefined);
-    if (!resolved) {
-      throw new Error(
-        '[MapLibreRenderer] maplibre-gl không khả dụng. Hãy cài `maplibre-gl` và truyền vào constructor, hoặc load global window.maplibregl.',
-      );
-    }
-    this.maplibre = resolved;
-  }
+  initialize(container: HTMLElement, options: MapOptions): void {
+    import('maplibre-gl').then((maplibreModule) => {
+      const MapLibre = maplibreModule.default || maplibreModule;
 
-  get isInitialized(): boolean {
-    return this.map !== null;
-  }
+      // Import CSS dynamically
+      if (!document.querySelector('link[href*="maplibre-gl"]')) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css';
+        document.head.appendChild(link);
+      }
 
-  initialize(container: HTMLElement, options: MapInitOptions): void {
-    if (this.map) {
-      throw new Error('[MapLibreRenderer] Map đã được khởi tạo.');
-    }
-    const [lng, lat] = options.center;
-    const tileUrl = options.tileUrl ?? DEFAULT_TILE_URL;
-
-    this.map = new this.maplibre.Map({
-      container,
-      center: [lng, lat],
-      zoom: options.zoom - 1,
-      minZoom: options.minZoom,
-      maxZoom: options.maxZoom,
-      style: {
-        version: 8,
-        sources: {
-          'osm-base': {
-            type: 'raster',
-            tiles: [tileUrl.replace('{s}', 'a')],
-            tileSize: 256,
-            attribution: options.attribution ?? DEFAULT_ATTRIBUTION,
+      const mapOptions: maplibregl.MapOptions = {
+        container: container,
+        style: {
+          version: 8,
+          sources: {
+            'osm-tiles': {
+              type: 'raster',
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              attribution:
+                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            },
           },
+          layers: [
+            {
+              id: 'osm-tiles-layer',
+              type: 'raster',
+              source: 'osm-tiles',
+              minzoom: 0,
+              maxzoom: 19,
+            },
+          ],
         },
-        layers: [
-          {
-            id: 'osm-base-layer',
-            type: 'raster',
-            source: 'osm-base',
-          },
-        ],
-      },
-    });
+        center: [options.center[1], options.center[0]], // [lng, lat] for MapLibre
+        zoom: options.zoom,
+        minZoom: options.minZoom,
+        maxZoom: options.maxZoom,
+        scrollZoom: options.scrollWheelZoom ? undefined : false,
+      };
 
-    this.popup = new this.maplibre.Popup({ closeButton: true, closeOnClick: true });
+      if (options.bounds) {
+        mapOptions.maxBounds = [
+          [options.bounds[0][1], options.bounds[0][0]], // [west, south]
+          [options.bounds[1][1], options.bounds[1][0]], // [east, north]
+        ];
+      }
+
+      this.map = new MapLibre.Map(mapOptions);
+
+      this.setupEventForwarding();
+    });
+  }
+
+  private setupEventForwarding(): void {
+    if (!this.map) return;
 
     this.map.on('load', () => {
-      this.loaded = true;
-      this.flushPending();
-      this.dispatch('ready', { target: this.map });
-      this.dispatch('load', { target: this.map });
+      this.emit('ready', { map: this.map });
     });
 
-    this.map.on('click', (e: maplibregl.MapMouseEvent) => {
-      this.dispatch('click', {
-        target: this.map,
-        lngLat: [e.lngLat.lng, e.lngLat.lat],
+    const eventsToForward = [
+      'click',
+      'dblclick',
+      'mousedown',
+      'mouseup',
+      'mouseover',
+      'mouseout',
+      'mousemove',
+      'contextmenu',
+      'zoomstart',
+      'zoomend',
+      'zoom',
+      'movestart',
+      'move',
+      'moveend',
+      'resize',
+      'dragstart',
+      'drag',
+      'dragend',
+      'error',
+    ];
+
+    eventsToForward.forEach((eventName) => {
+      this.map!.on(eventName, (e: maplibregl.MapMouseEvent) => {
+        const payload: EventPayload = {
+          type: eventName,
+          timestamp: Date.now(),
+          data: {
+            lng: e.lngLat?.lng,
+            lat: e.lngLat?.lat,
+            point: e.point,
+          },
+        };
+        this.emit(eventName, payload.data);
       });
     });
-    this.map.on('moveend', () => this.dispatch('moveend', { target: this.map }));
-    this.map.on('zoomend', () => this.dispatch('zoomend', { target: this.map }));
-    this.map.on('movestart', () => this.dispatch('movestart', { target: this.map }));
-    this.map.on('zoomstart', () => this.dispatch('zoomstart', { target: this.map }));
+
+    this.map.on('layer.add', (e) => {
+      this.emit('layeradd', { layer: e.layer });
+    });
+
+    this.map.on('layer.remove', (e) => {
+      this.emit('layerremove', { layer: e.layer });
+    });
   }
 
-  setView(center: LngLat, zoom: number): void {
-    this.assertMap();
-    this.map!.jumpTo({ center: [center[0], center[1]], zoom: zoom - 1 });
-  }
+  addMarker(id: string, options: MarkerOptions): void {
+    if (!this.map) return;
 
-  fitBounds(bounds: Bounds): void {
-    this.assertMap();
-    const [[south, west], [north, east]] = bounds;
-    this.map!.fitBounds(
-      [
-        [west, south],
-        [east, north],
+    const sourceId = `marker-source-${id}`;
+    const layerId = `marker-layer-${id}`;
+
+    const geojsonData: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [options.lng, options.lat],
+          },
+          properties: {
+            title: options.title || '',
+            popup: options.popup || '',
+          },
+        },
       ],
-      { padding: 20 },
-    );
-  }
+    };
 
-  addGeoJSON(geojson: VNGeoJSONCollection, options: LayerOptions, layerId?: string): string {
-    this.assertMap();
-    const id = layerId ?? `layer-${++this.layerCounter}`;
-    const op = () => this.addGeoJSONInternal(id, geojson, options);
-    if (this.loaded) {
-      op();
+    if (!sourceIds.has(sourceId)) {
+      this.map.addSource(sourceId, {
+        type: 'geojson',
+        data: geojsonData,
+      });
+      sourceIds.add(sourceId);
     } else {
-      this.pendingOps.push(op);
+      const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
+      if (source) {
+        source.setData(geojsonData);
+      }
     }
-    return id;
+
+    if (!this.map.getLayer(layerId)) {
+      this.map.addLayer({
+        id: layerId,
+        type: 'symbol',
+        source: sourceId,
+        layout: {
+          'icon-image': 'marker',
+          'icon-size': 1,
+          'icon-allow-overlap': true,
+          'text-field': ['get', 'title'],
+          'text-anchor': 'top',
+          'text-offset': [0, 1],
+        },
+        paint: {
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1,
+        },
+      });
+
+      if (options.popup) {
+        this.map.on('click', layerId, (e) => {
+          const coordinates = (e.features?.[0].geometry as GeoJSON.Point).coordinates.slice() as [
+            number,
+            number,
+          ];
+          const description =
+            (e.features?.[0].properties as Record<string, string> | undefined)?.popup || '';
+
+          new maplibregl.Popup().setLngLat(coordinates).setHTML(description).addTo(this.map!);
+        });
+
+        this.map.on('mouseenter', layerId, () => {
+          if (this.map) {
+            this.map.getCanvas().style.cursor = 'pointer';
+          }
+        });
+
+        this.map.on('mouseleave', layerId, () => {
+          if (this.map) {
+            this.map.getCanvas().style.cursor = '';
+          }
+        });
+      }
+    }
+
+    layerData.set(id, { sourceId, layerId });
   }
 
-  removeLayer(layerId: string): void {
-    const entry = this.layers.get(layerId);
-    if (!entry || !this.map) return;
-    const run = () => {
-      if (!this.map) return;
-      if (this.map.getLayer(entry.fillLayerId)) this.map.removeLayer(entry.fillLayerId);
-      if (this.map.getLayer(entry.lineLayerId)) this.map.removeLayer(entry.lineLayerId);
-      if (this.map.getSource(entry.sourceId)) this.map.removeSource(entry.sourceId);
-      this.layers.delete(layerId);
+  addPolygon(id: string, options: PolygonOptions): void {
+    if (!this.map) return;
+
+    const sourceId = `polygon-source-${id}`;
+    const layerId = `polygon-layer-${id}`;
+
+    // Convert coordinates to GeoJSON format [lng, lat]
+    const coordinates = options.coordinates.map((coord) => [coord[1], coord[0]]);
+    if (coordinates.length > 0) {
+      coordinates.push(coordinates[0]);
+    }
+
+    const geojsonData: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [coordinates],
+          },
+          properties: {},
+        },
+      ],
     };
-    if (this.loaded) run();
-    else this.pendingOps.push(run);
+
+    if (!sourceIds.has(sourceId)) {
+      this.map.addSource(sourceId, {
+        type: 'geojson',
+        data: geojsonData,
+      });
+      sourceIds.add(sourceId);
+    } else {
+      const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
+      if (source) {
+        source.setData(geojsonData);
+      }
+    }
+
+    if (!this.map.getLayer(`${layerId}-fill`)) {
+      this.map.addLayer({
+        id: `${layerId}-fill`,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': options.fillColor ?? '#3388ff',
+          'fill-opacity': options.fillOpacity ?? 0.2,
+        },
+      });
+    }
+
+    if (!this.map.getLayer(layerId)) {
+      this.map.addLayer({
+        id: layerId,
+        type: 'line',
+        source: sourceId,
+        paint: {
+          'line-color': options.color ?? '#3388ff',
+          'line-width': options.weight ?? 2,
+          'line-opacity': options.opacity ?? 1,
+        },
+      });
+    }
+
+    layerData.set(id, { sourceId, layerId: `${layerId}-fill` });
   }
 
-  setLayerStyle(layerId: string, style: LayerStyle): void {
-    const entry = this.layers.get(layerId);
-    if (!entry) return;
-    entry.style = mergeStyle(entry.style, style);
-    const run = () => {
-      if (!this.map) return;
-      const s = entry.style;
-      if (s.fillColor !== undefined)
-        this.map.setPaintProperty(entry.fillLayerId, 'fill-color', s.fillColor);
-      if (s.fillOpacity !== undefined)
-        this.map.setPaintProperty(entry.fillLayerId, 'fill-opacity', s.fillOpacity);
-      if (s.strokeColor !== undefined)
-        this.map.setPaintProperty(entry.lineLayerId, 'line-color', s.strokeColor);
-      if (s.strokeWidth !== undefined)
-        this.map.setPaintProperty(entry.lineLayerId, 'line-width', s.strokeWidth);
-    };
-    if (this.loaded) run();
-    else this.pendingOps.push(run);
+  addGeoJSON(id: string, options: GeoJSONOptions): void {
+    if (!this.map) return;
+
+    const sourceId = `geojson-source-${id}`;
+    const layerId = `geojson-layer-${id}`;
+
+    if (!sourceIds.has(sourceId)) {
+      this.map.addSource(sourceId, {
+        type: 'geojson',
+        data: options.data,
+      });
+      sourceIds.add(sourceId);
+    } else {
+      const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
+      if (source) {
+        source.setData(options.data);
+      }
+    }
+
+    const geometryType = this.getGeometryType(options.data);
+    const layerType =
+      geometryType === 'Point' || geometryType === 'MultiPoint'
+        ? 'symbol'
+        : geometryType === 'LineString' || geometryType === 'MultiLineString'
+          ? 'line'
+          : 'fill';
+
+    if (!this.map.getLayer(layerId)) {
+      if (layerType === 'symbol') {
+        this.map.addLayer({
+          id: layerId,
+          type: 'symbol',
+          source: sourceId,
+          layout: {
+            'icon-image': 'marker',
+            'icon-size': 1,
+            'icon-allow-overlap': true,
+          },
+          paint: {
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1,
+          },
+        });
+      } else if (layerType === 'line') {
+        this.map.addLayer({
+          id: layerId,
+          type: 'line',
+          source: sourceId,
+          paint: {
+            'line-color': options.style?.color ?? '#3388ff',
+            'line-width': options.style?.weight ?? 2,
+            'line-opacity': options.style?.opacity ?? 1,
+          },
+        });
+      } else {
+        this.map.addLayer({
+          id: layerId,
+          type: 'fill',
+          source: sourceId,
+          paint: {
+            'fill-color': options.style?.fillColor ?? options.style?.color ?? '#3388ff',
+            'fill-opacity': options.style?.fillOpacity ?? 0.2,
+          },
+        });
+
+        const outlineId = `${layerId}-outline`;
+        if (!this.map.getLayer(outlineId)) {
+          this.map.addLayer({
+            id: outlineId,
+            type: 'line',
+            source: sourceId,
+            paint: {
+              'line-color': options.style?.color ?? '#3388ff',
+              'line-width': options.style?.weight ?? 2,
+              'line-opacity': options.style?.opacity ?? 1,
+            },
+          });
+        }
+      }
+    }
+
+    layerData.set(id, { sourceId, layerId });
   }
 
-  setLayerVisibility(layerId: string, visible: boolean): void {
-    const entry = this.layers.get(layerId);
-    if (!entry) return;
-    const run = () => {
-      if (!this.map) return;
-      const v = visible ? 'visible' : 'none';
-      this.map.setLayoutProperty(entry.fillLayerId, 'visibility', v);
-      this.map.setLayoutProperty(entry.lineLayerId, 'visibility', v);
-    };
-    if (this.loaded) run();
-    else this.pendingOps.push(run);
+  private getGeometryType(data: GeoJSON.FeatureCollection | GeoJSON.Feature): string {
+    if (data.type === 'Feature') {
+      return data.geometry?.type || '';
+    }
+    const feature = data.features.find((f) => f.geometry !== null);
+    return feature?.geometry?.type || '';
   }
 
-  on(event: MapEvent | string, handler: EventHandler): void {
+  removeLayer(id: string): void {
+    if (!this.map) return;
+
+    const data = layerData.get(id);
+    if (data) {
+      try {
+        if (this.map.getLayer(data.layerId)) {
+          this.map.removeLayer(data.layerId);
+        }
+        const outlineId = `${data.layerId}-outline`;
+        if (this.map.getLayer(outlineId)) {
+          this.map.removeLayer(outlineId);
+        }
+        const fillId = `${data.layerId}-fill`;
+        if (this.map.getLayer(fillId)) {
+          this.map.removeLayer(fillId);
+        }
+      } catch {
+        // Layer may not exist
+      }
+
+      try {
+        if (sourceIds.has(data.sourceId)) {
+          this.map.removeSource(data.sourceId);
+          sourceIds.delete(data.sourceId);
+        }
+      } catch {
+        // Source may not exist
+      }
+
+      layerData.delete(id);
+    }
+  }
+
+  setView(center: LatLng, zoom?: number): void {
+    if (this.map) {
+      this.map.flyTo({
+        center: [center[1], center[0]],
+        zoom: zoom ?? this.map.getZoom(),
+      });
+    }
+  }
+
+  fitBounds(bounds: BoundsTuple): void {
+    if (this.map) {
+      this.map.fitBounds(
+        [
+          [bounds[0][1], bounds[0][0]],
+          [bounds[1][1], bounds[1][0]],
+        ],
+        { padding: 20 },
+      );
+    }
+  }
+
+  on(event: string, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
     }
     this.eventHandlers.get(event)!.add(handler);
   }
 
-  off(event: MapEvent | string, handler: EventHandler): void {
+  off(event: string, handler: EventHandler): void {
     this.eventHandlers.get(event)?.delete(handler);
   }
 
-  onLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void {
-    this.layers.get(layerId)?.clickHandlers.add(handler);
-  }
-
-  offLayerClick(layerId: string, handler: (feature: VNGeoJSONFeature) => void): void {
-    this.layers.get(layerId)?.clickHandlers.delete(handler);
+  private emit(event: string, data?: unknown): void {
+    const handlers = this.eventHandlers.get(event);
+    if (handlers) {
+      const payload: EventPayload = {
+        type: event,
+        timestamp: Date.now(),
+        data,
+      };
+      handlers.forEach((handler) => handler(payload));
+    }
   }
 
   destroy(): void {
-    this.layers.clear();
-    this.eventHandlers.clear();
-    this.pendingOps = [];
-    this.popup?.remove();
-    this.popup = null;
+    layerData.forEach((_, id) => {
+      this.removeLayer(id);
+    });
+
     if (this.map) {
       this.map.remove();
       this.map = null;
     }
-    this.loaded = false;
+
+    this.eventHandlers.clear();
   }
-
-  /**
-   * Truy cập map instance native (cho advanced use-cases)
-   */
-  getNativeMap(): maplibregl.Map | null {
-    return this.map;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
-
-  private addGeoJSONInternal(
-    id: string,
-    geojson: VNGeoJSONCollection,
-    options: LayerOptions,
-  ): void {
-    if (!this.map) return;
-    const sourceId = `${id}-src`;
-    const fillLayerId = `${id}-fill`;
-    const lineLayerId = `${id}-line`;
-    const baseStyle = options.style ?? {};
-    const interactive = options.interactive !== false;
-
-    this.map.addSource(sourceId, {
-      type: 'geojson',
-      data: geojson as unknown as GeoJSON.FeatureCollection,
-    });
-
-    this.map.addLayer({
-      id: fillLayerId,
-      type: 'fill',
-      source: sourceId,
-      paint: {
-        'fill-color': baseStyle.fillColor ?? '#4a90d9',
-        'fill-opacity': baseStyle.fillOpacity ?? 0.2,
-      },
-    });
-
-    this.map.addLayer({
-      id: lineLayerId,
-      type: 'line',
-      source: sourceId,
-      paint: {
-        'line-color': baseStyle.strokeColor ?? '#2c6fad',
-        'line-width': baseStyle.strokeWidth ?? 1.5,
-      },
-    });
-
-    const entry: MapLibreLayerEntry = {
-      sourceId,
-      fillLayerId,
-      lineLayerId,
-      options,
-      style: baseStyle,
-      clickHandlers: new Set(),
-      interactive,
-    };
-    this.layers.set(id, entry);
-
-    if (interactive) {
-      this.bindLayerInteractions(fillLayerId, entry, options);
-    }
-  }
-
-  private bindLayerInteractions(
-    fillLayerId: string,
-    entry: MapLibreLayerEntry,
-    options: LayerOptions,
-  ): void {
-    if (!this.map) return;
-    const map = this.map;
-
-    map.on('mouseenter', fillLayerId, () => {
-      map.getCanvas().style.cursor = 'pointer';
-      if (entry.style.hoverFillColor) {
-        map.setPaintProperty(fillLayerId, 'fill-color', entry.style.hoverFillColor);
-      }
-      map.setPaintProperty(
-        fillLayerId,
-        'fill-opacity',
-        Math.min((entry.style.fillOpacity ?? 0.2) + 0.15, 1),
-      );
-    });
-
-    map.on('mouseleave', fillLayerId, () => {
-      map.getCanvas().style.cursor = '';
-      map.setPaintProperty(fillLayerId, 'fill-color', entry.style.fillColor ?? '#4a90d9');
-      map.setPaintProperty(fillLayerId, 'fill-opacity', entry.style.fillOpacity ?? 0.2);
-    });
-
-    map.on('click', fillLayerId, (e: maplibregl.MapLayerMouseEvent) => {
-      const feature = e.features?.[0] as unknown as VNGeoJSONFeature | undefined;
-      if (!feature) return;
-      entry.clickHandlers.forEach((h) => h(feature));
-      this.dispatch('click', {
-        target: map,
-        feature,
-        lngLat: [e.lngLat.lng, e.lngLat.lat],
-      });
-      if (options.popup && this.popup) {
-        const content = this.buildPopupContent(feature, options.popup);
-        if (content) {
-          this.popup.setLngLat(e.lngLat).setHTML(content).addTo(map);
-        }
-      }
-    });
-  }
-
-  private flushPending(): void {
-    const ops = this.pendingOps;
-    this.pendingOps = [];
-    ops.forEach((op) => op());
-  }
-
-  private assertMap(): void {
-    if (!this.map) {
-      throw new Error('[MapLibreRenderer] Map chưa được khởi tạo. Gọi initialize() trước.');
-    }
-  }
-
-  private dispatch(
-    event: string,
-    payload: { target: unknown; lngLat?: LngLat; feature?: VNGeoJSONFeature; layerId?: string },
-  ): void {
-    this.eventHandlers.get(event)?.forEach((handler) => {
-      try {
-        handler({ type: event as MapEvent, ...payload });
-      } catch (err) {
-        console.error(`[MapLibreRenderer] Error in "${event}" handler:`, err);
-      }
-    });
-  }
-
-  private buildPopupContent(feature: VNGeoJSONFeature, popup: boolean | PopupOptions): string {
-    if (typeof popup === 'object' && popup.contentTemplate) {
-      return popup.contentTemplate(feature);
-    }
-    const props = feature.properties;
-    if (!props) return '';
-    const name = props.fullName ?? props.full_name ?? props.name ?? props.code ?? '';
-    const parts: string[] = [`<strong>${escapeHtml(String(name))}</strong>`];
-    if (props.code) parts.push(`<div>Mã: ${escapeHtml(String(props.code))}</div>`);
-    if (props.area_km2)
-      parts.push(`<div>Diện tích: ${escapeHtml(String(props.area_km2))} km²</div>`);
-    return `<div class="vn-gis-popup">${parts.join('')}</div>`;
-  }
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
