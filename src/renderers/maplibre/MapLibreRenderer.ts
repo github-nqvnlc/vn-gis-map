@@ -14,16 +14,19 @@ import type {
 } from '../../types';
 import maplibregl from 'maplibre-gl';
 
-// Map to store layer IDs and source IDs
-const layerData = new Map<string, { sourceId: string; layerId: string }>();
-const sourceIds = new Set<string>();
-
 export class MapLibreRenderer {
   private map: maplibregl.Map | null = null;
   private eventHandlers = new Map<string, Set<EventHandler>>();
+  private layerData = new Map<string, { sourceId: string; layerId: string }>();
+  private sourceIds = new Set<string>();
+  private destroyed = false;
 
   initialize(container: HTMLElement, options: MapOptions): void {
+    this.destroyed = false;
+
     import('maplibre-gl').then((maplibreModule) => {
+      if (this.destroyed) return;
+
       const MapLibre = maplibreModule.default || maplibreModule;
 
       // Import CSS dynamically
@@ -153,12 +156,12 @@ export class MapLibreRenderer {
       ],
     };
 
-    if (!sourceIds.has(sourceId)) {
+    if (!this.sourceIds.has(sourceId)) {
       this.map.addSource(sourceId, {
         type: 'geojson',
         data: geojsonData,
       });
-      sourceIds.add(sourceId);
+      this.sourceIds.add(sourceId);
     } else {
       const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
       if (source) {
@@ -211,7 +214,7 @@ export class MapLibreRenderer {
       }
     }
 
-    layerData.set(id, { sourceId, layerId });
+    this.layerData.set(id, { sourceId, layerId });
   }
 
   addPolygon(id: string, options: PolygonOptions): void {
@@ -240,12 +243,12 @@ export class MapLibreRenderer {
       ],
     };
 
-    if (!sourceIds.has(sourceId)) {
+    if (!this.sourceIds.has(sourceId)) {
       this.map.addSource(sourceId, {
         type: 'geojson',
         data: geojsonData,
       });
-      sourceIds.add(sourceId);
+      this.sourceIds.add(sourceId);
     } else {
       const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
       if (source) {
@@ -278,7 +281,7 @@ export class MapLibreRenderer {
       });
     }
 
-    layerData.set(id, { sourceId, layerId: `${layerId}-fill` });
+    this.layerData.set(id, { sourceId, layerId: `${layerId}-fill` });
   }
 
   addGeoJSON(id: string, options: GeoJSONOptions): void {
@@ -287,12 +290,12 @@ export class MapLibreRenderer {
     const sourceId = `geojson-source-${id}`;
     const layerId = `geojson-layer-${id}`;
 
-    if (!sourceIds.has(sourceId)) {
+    if (!this.sourceIds.has(sourceId)) {
       this.map.addSource(sourceId, {
         type: 'geojson',
         data: options.data,
       });
-      sourceIds.add(sourceId);
+      this.sourceIds.add(sourceId);
     } else {
       const source = this.map.getSource(sourceId) as maplibregl.GeoJSONSource;
       if (source) {
@@ -362,7 +365,7 @@ export class MapLibreRenderer {
       }
     }
 
-    layerData.set(id, { sourceId, layerId });
+    this.layerData.set(id, { sourceId, layerId });
   }
 
   private getGeometryType(data: GeoJSON.FeatureCollection | GeoJSON.Feature): string {
@@ -376,7 +379,7 @@ export class MapLibreRenderer {
   removeLayer(id: string): void {
     if (!this.map) return;
 
-    const data = layerData.get(id);
+    const data = this.layerData.get(id);
     if (data) {
       try {
         if (this.map.getLayer(data.layerId)) {
@@ -395,15 +398,15 @@ export class MapLibreRenderer {
       }
 
       try {
-        if (sourceIds.has(data.sourceId)) {
+        if (this.sourceIds.has(data.sourceId)) {
           this.map.removeSource(data.sourceId);
-          sourceIds.delete(data.sourceId);
+          this.sourceIds.delete(data.sourceId);
         }
       } catch {
         // Source may not exist
       }
 
-      layerData.delete(id);
+      this.layerData.delete(id);
     }
   }
 
@@ -452,7 +455,9 @@ export class MapLibreRenderer {
   }
 
   destroy(): void {
-    layerData.forEach((_, id) => {
+    this.destroyed = true;
+
+    this.layerData.forEach((_, id) => {
       this.removeLayer(id);
     });
 

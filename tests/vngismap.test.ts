@@ -158,6 +158,41 @@ describe('VNGisMap', () => {
       map.addLayer('test-geojson', 'geojson', { data: geojson });
       map.destroy();
     });
+
+    it('should add a MultiPolygon boundary', () => {
+      const map = new VNGisMap({ container });
+      map.addMultiPolygon('da-nang-boundary', {
+        coordinates: [
+          [
+            [
+              [108.1, 16.12],
+              [108.25, 16.08],
+              [108.35, 16.05],
+              [108.1, 16.12],
+            ],
+          ],
+        ],
+        properties: {
+          code: '48',
+          name: 'Đà Nẵng',
+        },
+        style: {
+          color: '#dc2626',
+          fillOpacity: 0.1,
+        },
+      });
+      map.destroy();
+    });
+
+    it('should reject an empty MultiPolygon', () => {
+      const map = new VNGisMap({ container });
+      expect(() =>
+        map.addMultiPolygon('empty-boundary', {
+          coordinates: [],
+        }),
+      ).toThrow('MultiPolygon coordinates cannot be empty');
+      map.destroy();
+    });
   });
 
   describe('removeLayer', () => {

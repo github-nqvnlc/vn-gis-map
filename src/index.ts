@@ -30,6 +30,7 @@ export type {
   LeafletIconOptions,
   MapLibreIconOptions,
   PolygonOptions,
+  MultiPolygonOptions,
   GeoJSONOptions,
   GeoJSONStyle,
   // Layer storage

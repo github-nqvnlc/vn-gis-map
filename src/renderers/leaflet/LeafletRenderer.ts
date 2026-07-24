@@ -13,17 +13,22 @@ import type {
   EventPayload,
 } from '../../types';
 
-// Map to store layer instances
-const layerInstances = new Map<string, L.Layer>();
-
 export class LeafletRenderer {
   private map: L.Map | null = null;
   private eventHandlers = new Map<string, Set<EventHandler>>();
+  private layerInstances = new Map<string, L.Layer>();
   private L: typeof import('leaflet') | null = null;
+  private destroyed = false;
 
   initialize(container: HTMLElement, options: MapOptions): void {
+    this.destroyed = false;
+
     // Dynamically import Leaflet
     import('leaflet').then((leafletModule) => {
+      // React Strict Mode may destroy this renderer while the dynamic import
+      // is still pending. Never initialize a stale instance on the container.
+      if (this.destroyed) return;
+
       this.L = leafletModule.default || leafletModule;
       const L = this.L;
 
@@ -151,7 +156,7 @@ export class LeafletRenderer {
     }
 
     marker.addTo(this.map);
-    layerInstances.set(id, marker);
+    this.layerInstances.set(id, marker);
   }
 
   addPolygon(id: string, options: PolygonOptions): void {
@@ -167,7 +172,7 @@ export class LeafletRenderer {
     });
 
     polygon.addTo(this.map);
-    layerInstances.set(id, polygon);
+    this.layerInstances.set(id, polygon);
   }
 
   addGeoJSON(id: string, options: GeoJSONOptions): void {
@@ -187,14 +192,14 @@ export class LeafletRenderer {
     });
 
     layer.addTo(this.map);
-    layerInstances.set(id, layer);
+    this.layerInstances.set(id, layer);
   }
 
   removeLayer(id: string): void {
-    const layer = layerInstances.get(id);
+    const layer = this.layerInstances.get(id);
     if (layer && this.map) {
       this.map.removeLayer(layer);
-      layerInstances.delete(id);
+      this.layerInstances.delete(id);
     }
   }
 
@@ -239,12 +244,14 @@ export class LeafletRenderer {
   }
 
   destroy(): void {
-    layerInstances.forEach((layer) => {
+    this.destroyed = true;
+
+    this.layerInstances.forEach((layer) => {
       if (this.map) {
         this.map.removeLayer(layer);
       }
     });
-    layerInstances.clear();
+    this.layerInstances.clear();
 
     if (this.map) {
       this.map.remove();

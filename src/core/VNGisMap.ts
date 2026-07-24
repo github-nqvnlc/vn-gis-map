@@ -11,6 +11,7 @@ import type {
   LayerOptions,
   MarkerOptions,
   PolygonOptions,
+  MultiPolygonOptions,
   GeoJSONOptions,
 } from '../types';
 import { VN_CENTER, VN_DEFAULT_ZOOM, VN_MIN_ZOOM, VN_MAX_ZOOM } from '../utils/bounds';
@@ -165,6 +166,50 @@ export class VNGisMap extends EventEmitter {
     }
 
     this.emit('layeradd', { id, type, options });
+  }
+
+  /**
+   * Add a GeoJSON MultiPolygon boundary.
+   *
+   * This is a convenience API for administrative areas such as a selected
+   * province or city. Coordinates use the GeoJSON order [longitude, latitude].
+   */
+  addMultiPolygon(id: string, options: MultiPolygonOptions): void {
+    if (!this.renderer) {
+      throw new Error('[VNGisMap] Map not initialized');
+    }
+
+    if (!options.coordinates.length) {
+      throw new Error('[VNGisMap] MultiPolygon coordinates cannot be empty');
+    }
+
+    const feature: GeoJSON.Feature<GeoJSON.MultiPolygon> = {
+      type: 'Feature',
+      geometry: {
+        type: 'MultiPolygon',
+        coordinates: options.coordinates,
+      },
+      properties: options.properties ?? {},
+    };
+
+    this.renderer.addGeoJSON(id, {
+      data: feature,
+      style: {
+        color: '#2563eb',
+        fillColor: '#60a5fa',
+        fillOpacity: 0.15,
+        weight: 3,
+        opacity: 1,
+        ...options.style,
+      },
+    });
+
+    this.emit('layeradd', {
+      id,
+      type: 'geojson',
+      geometryType: 'MultiPolygon',
+      options,
+    });
   }
 
   /**

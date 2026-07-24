@@ -169,6 +169,36 @@ map.addLayer('geojson-id', 'geojson', {
 map.removeLayer('marker-id');
 ```
 
+### MultiPolygon (ranh giới tỉnh/thành phố)
+
+`addMultiPolygon` nhận tọa độ theo chuẩn GeoJSON `[longitude, latitude]`:
+
+```javascript
+const selectedCity = geojson.features.find(
+  (feature) => feature.properties.code === '48',
+);
+
+if (selectedCity?.geometry.type === 'MultiPolygon') {
+  map.addMultiPolygon('selected-city', {
+    coordinates: selectedCity.geometry.coordinates,
+    properties: selectedCity.properties,
+    style: {
+      color: '#dc2626',
+      fillColor: '#f87171',
+      fillOpacity: 0.15,
+      weight: 3,
+    },
+  });
+}
+```
+
+Đổi thành phố được chọn bằng cách xóa layer cũ rồi thêm layer mới:
+
+```javascript
+map.removeLayer('selected-city');
+map.addMultiPolygon('selected-city', nextCityOptions);
+```
+
 ---
 
 ## API Reference
@@ -178,6 +208,7 @@ map.removeLayer('marker-id');
 | Phương thức | Mô tả |
 |---|---|
 | `addLayer(id, type, options)` | Thêm layer |
+| `addMultiPolygon(id, options)` | Hiển thị ranh giới MultiPolygon |
 | `removeLayer(id)` | Xóa layer theo ID |
 | `setView(center, zoom?)` | Đặt tâm và zoom |
 | `fitBounds(bounds)` | Phóng bounds |

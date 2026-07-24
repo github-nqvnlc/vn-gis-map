@@ -121,7 +121,20 @@ export interface GeoJSONStyle {
   opacity?: number;
 }
 
-export type LayerOptions = MarkerOptions | PolygonOptions | GeoJSONOptions;
+/**
+ * Options for rendering an administrative boundary or another GeoJSON
+ * MultiPolygon. Coordinates follow the GeoJSON order: [longitude, latitude].
+ */
+export interface MultiPolygonOptions {
+  /** GeoJSON MultiPolygon coordinates as [longitude, latitude] */
+  coordinates: GeoJSON.MultiPolygon['coordinates'];
+  /** Optional properties attached to the generated GeoJSON feature */
+  properties?: GeoJSON.GeoJsonProperties;
+  /** Boundary and fill style */
+  style?: GeoJSONStyle;
+}
+
+export type LayerOptions = MarkerOptions | PolygonOptions | GeoJSONOptions | MultiPolygonOptions;
 
 // ============================================
 // Layer Storage
